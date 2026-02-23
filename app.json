@@ -1,17 +1,31 @@
 {
   "expo": {
-    "name": "rn-google-login",
-    "slug": "rn-google-login",
+    "name": "pedometer",
+    "owner": "seoma",
+    "slug": "pedometer",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "rngooglelogin",
+    "scheme": "pedometer",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.seoma.pedmeter",
+      "infoPlist": {
+        "NSHealthShareUsageDescription": "걸음 수를 측정하여 포인트를 적립하기 위해 건강 데이터 접근이 필요합니다.",
+        "NSHealthUpdateUsageDescription": "앱에서 건강 데이터를 기록하기 위해 필요합니다."
+      }
     },
     "android": {
+      "package": "com.seoma.pedmeter",
+      "permissions": [
+        "ACTIVITY_RECOGNITION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_DATA_SYNC",
+        "POST_NOTIFICATIONS",
+        "WAKE_LOCK"
+      ],
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -38,11 +52,32 @@
             "backgroundColor": "#000000"
           }
         }
+      ],
+      [
+        "@react-native-google-signin/google-signin",
+        {
+          "iosUrlScheme": "com.googleusercontent.apps.705515267078-dfqv7mar46juto9ls5mlhceolj5lfatb"
+        }
+      ],
+      "expo-health-connect",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "minSdkVersion": 26
+          }
+        }
       ]
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "8a7978fb-36d5-4c4b-8d9a-328a9e5e40ac"
+      }
     }
   }
 }

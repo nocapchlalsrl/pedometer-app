@@ -8,6 +8,7 @@ import {
   Alert,
   AppState,
   AppStateStatus,
+  InteractionManager,
   Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -205,6 +206,7 @@ export default function MainScreen() {
                 grade: info.grade,
                 classNo: info.classNo,
                 number: info.number,
+                studentLabel: `${info.grade}학년${info.classNo}반${info.number}번 ${info.name}`,
               }
             : {}),
         },
@@ -364,14 +366,14 @@ export default function MainScreen() {
         const googleUser = await AsyncStorage.getItem('googleUser');
         if (!googleUser) {
           if (!alive) return;
-          router.replace('/');
+          router.replace('/login');
           return;
         }
 
         const uid = extractUidFromGoogleUser(googleUser);
         if (!uid) {
           if (!alive) return;
-          router.replace('/');
+          router.replace('/login');
           return;
         }
         uidRef.current = uid;
@@ -447,9 +449,11 @@ export default function MainScreen() {
               onPress: async () => {
                 try {
                   await AsyncStorage.setItem(STORAGE_KEYS.bgConsent, 'granted');
-                  // ✅ 동의 후 서비스 시작 (딜레이로 Alert dismiss 완료 후 시작)
+                  // ✅ 동의 후 서비스 시작 (애니메이션 완료 후 시작으로 keep awake 에러 방지)
                   if (Platform.OS === 'android') {
-                    setTimeout(() => { startForegroundSync(); }, 500);
+                    InteractionManager.runAfterInteractions(() => {
+                      setTimeout(() => { startForegroundSync(); }, 500);
+                    });
                   }
                 } catch {}
               },
@@ -522,11 +526,13 @@ export default function MainScreen() {
         await startWatch();
 
         // ✅ Android: 이전에 동의한 경우에만 포그라운드 서비스 시작
-        // 네비게이션 전환이 완전히 끝난 후 시작해야 LogBox 크래시 방지
+        // InteractionManager로 애니메이션이 완전히 끝난 후 시작 (keep awake 에러 방지)
         if (Platform.OS === 'android') {
           const consent = await AsyncStorage.getItem(STORAGE_KEYS.bgConsent);
           if (consent === 'granted') {
-            setTimeout(() => { startForegroundSync(); }, 2000);
+            InteractionManager.runAfterInteractions(() => {
+              setTimeout(() => { startForegroundSync(); }, 500);
+            });
           }
         }
       } catch (e) {

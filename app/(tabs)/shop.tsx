@@ -46,6 +46,7 @@ export default function ShopScreen() {
   const [uid, setUid] = useState<string | null>(null);
   const [points, setPoints] = useState<number>(0);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [studentLabel, setStudentLabel] = useState('');
 
   // ✅ 상점 아이템(하드코딩)
   const items: ShopItem[] = useMemo(
@@ -70,6 +71,15 @@ export default function ShopScreen() {
       if (!u) return;
 
       setUid(u);
+
+      // 학생 정보 (구매 기록에 저장)
+      try {
+        const s = await AsyncStorage.getItem('studentInfo');
+        if (s) {
+          const info = JSON.parse(s);
+          setStudentLabel(`${info.grade}학년${info.classNo}반${info.number}번 ${info.name}`);
+        }
+      } catch {}
 
       // 로컬 포인트 먼저
       try {
@@ -132,14 +142,30 @@ export default function ShopScreen() {
         const next = curSafe - item.price;
         tx.set(uRef, { points: next, updatedAt: serverTimestamp() }, { merge: true });
 
-        // ✅ 사용내역은 ledger에서 읽을 purchases에만 기록
-        const pCol = collection(db, 'users', uid, 'purchases');
-        const pDoc = doc(pCol);
+        // 역타임스탬프 ID → Firebase 콘솔에서 최신 항목이 맨 위에 표시됨
+        const reverseTs = String(9007199254740991 - Date.now()).padStart(16, '0');
+
+        // 개인 구매 기록 (users/{uid}/purchases)
+        const pDoc = doc(db, 'users', uid, 'purchases', reverseTs);
         tx.set(pDoc, {
           itemId: item.id,
           name: item.name,
           price: item.price,
           qty: 1,
+          createdAt: serverTimestamp(),
+          studentLabel,
+        });
+
+        // ✅ 관리자용 전체 사용내역 (ledger 최상위 컬렉션) — Firebase 콘솔에서 한눈에 확인
+        const lDoc = doc(db, 'ledger', `${reverseTs}_${uid.slice(0, 8)}`);
+        tx.set(lDoc, {
+          uid,
+          studentLabel,
+          itemId: item.id,
+          name: item.name,
+          price: item.price,
+          pointsBefore: curSafe,
+          pointsAfter: next,
           createdAt: serverTimestamp(),
         });
 

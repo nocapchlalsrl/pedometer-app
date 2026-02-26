@@ -10,6 +10,9 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { db } from '../lib/firebase';
+import { extractUidFromGoogleUser } from '../lib/utils';
 
 const COLORS = {
   BG: '#071427',
@@ -32,9 +35,29 @@ export default function SignupScreen() {
     }
 
     const info = { grade, classNo, number, name };
+    const studentLabel = `${grade}학년${classNo}반${number}번 ${name}`;
+    // 문서 ID: "학년반번_이름" 순수 숫자 → Firebase 콘솔에서 학년→반→번호→이름 순 정렬
+    // 예: "20719_홍길동" (2학년 07반 19번 홍길동)
+    const rosterId = `${grade}${classNo.padStart(2, '0')}${number.padStart(2, '0')}_${name}`;
 
     try {
       await AsyncStorage.setItem('studentInfo', JSON.stringify(info));
+
+      // ✅ roster 컬렉션: 관리자가 학년/반/번호로 학생을 찾기 위한 인덱스
+      const raw = await AsyncStorage.getItem('googleUser');
+      const uid = raw ? extractUidFromGoogleUser(raw) : null;
+      if (uid) {
+        await setDoc(doc(db, 'roster', rosterId), {
+          uid,
+          name,
+          grade,
+          classNo,
+          number,
+          studentLabel,
+          updatedAt: serverTimestamp(),
+        }, { merge: true });
+      }
+
       router.replace('/(tabs)');
     } catch (e) {
       console.log('STORAGE_SAVE_ERR', e);

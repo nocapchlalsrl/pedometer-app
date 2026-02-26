@@ -70,6 +70,7 @@ async function flushToCloud(uid: string, steps: number, points: number) {
             grade: studentInfo.grade,
             classNo: studentInfo.classNo,
             number: studentInfo.number,
+            studentLabel: `${studentInfo.grade}학년${studentInfo.classNo}반${studentInfo.number}번 ${studentInfo.name}`,
           }
         : {}),
     },
@@ -119,25 +120,26 @@ const task = async (taskDataArguments: any) => {
         const nextSteps = localSteps + safeDiff;
         await writeLocalNumber(STORAGE_KEYS.stepsValue, nextSteps);
 
-        // 포인트는 "누적 steps 기반"으로 단순 계산
+        // ✅ 포인트는 "이전 걸음 → 새 걸음의 증가분"만 더함
+        // stepsToPoints(totalSteps)를 prevPoints와 비교하면 구매로 줄어든
+        // 포인트를 복구해버리는 버그 발생 → 증가분(earnedIncrement)만 반영
         const prevPoints = await readLocalNumber(STORAGE_KEYS.pointsValue);
-        const target = stepsToPoints(nextSteps);
-        // 상점 구매로 points가 내려갈 수 있으니, 여기서는 "증가분만" 반영하게 하려면 max 쓰면 안 됨.
-        // 대신: "걸음으로 벌어들인 포인트"를 별도 필드로 관리해야 완벽함.
-        // 일단 지금 구조 유지: 걸음 포인트가 기존보다 클 때만 올림.
-        const nextPoints = target > prevPoints ? target : prevPoints;
+        const earnedIncrement = stepsToPoints(nextSteps) - stepsToPoints(localSteps);
+        const nextPoints = earnedIncrement > 0 ? prevPoints + earnedIncrement : prevPoints;
 
         if (nextPoints !== prevPoints) {
           await writeLocalNumber(STORAGE_KEYS.pointsValue, nextPoints);
         }
 
         await flushToCloud(uid, nextSteps, nextPoints);
-
-        // ✅ 알림 내용 업데이트
-        await BackgroundService.updateNotification({
-          taskDesc: `오늘 ${nextSteps.toLocaleString()}걸음 · ${nextPoints.toLocaleString()}P`,
-        });
       }
+
+      // ✅ 알림은 매 루프마다 Firebase에 저장된 값(localSteps 기준) 표시
+      const displaySteps = await readLocalNumber(STORAGE_KEYS.stepsValue);
+      await BackgroundService.updateNotification({
+        taskTitle: '걸음수 저장중',
+        taskDesc: `현재 ${displaySteps.toLocaleString()}걸음`,
+      });
     } catch (e) {
       console.log('FG_SERVICE_LOOP_ERR', e);
     }
@@ -148,8 +150,8 @@ const task = async (taskDataArguments: any) => {
 
 const options = {
   taskName: '만보기',
-  taskTitle: '만보기 실행 중',
-  taskDesc: '백그라운드에서 걸음수를 동기화합니다.',
+  taskTitle: '걸음수 저장중',
+  taskDesc: '현재 걸음수를 불러오는 중...',
   taskIcon: {
     name: 'ic_launcher',
     type: 'mipmap',

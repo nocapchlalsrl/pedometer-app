@@ -25,7 +25,9 @@ import {
 } from 'firebase/firestore';
 import { useFocusEffect } from '@react-navigation/native';
 import { GoogleSignin } from '@react-native-google-signin/google-signin';
-import { fireLogout } from '../../lib/authEvents';
+import { signOut as firebaseSignOut } from 'firebase/auth';
+import { auth } from '../../lib/firebase';
+import { router } from 'expo-router';
 
 const COLORS = {
   BG: '#0F172A',
@@ -156,11 +158,10 @@ export default function MyPageTab() {
       {
         text: '로그아웃',
         onPress: async () => {
-          try {
-            await GoogleSignin.signOut();
-          } catch {}
+          try { await GoogleSignin.signOut(); } catch {}
+          try { await firebaseSignOut(auth); } catch {}
           await clearLocalData();
-          fireLogout();
+          router.replace('/login');
         },
       },
     ]);
@@ -196,8 +197,9 @@ export default function MyPageTab() {
 
               // 구글 로그아웃 + 로컬 데이터 삭제
               try { await GoogleSignin.signOut(); } catch {}
+              try { await firebaseSignOut(auth); } catch {}
               await clearLocalData();
-              fireLogout();
+              router.replace('/login');
             } catch (e) {
               console.log('DELETE_ACCOUNT_ERR', e);
               Alert.alert('오류', '계정 삭제 중 오류가 발생했습니다. 다시 시도해주세요.');

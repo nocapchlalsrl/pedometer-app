@@ -82,6 +82,7 @@ export default function Index() {
         await AsyncStorage.removeItem('studentInfo');
         await AsyncStorage.removeItem('steps_today_date');
         await AsyncStorage.removeItem('steps_today_value');
+        await AsyncStorage.removeItem('points_value');
         await AsyncStorage.setItem('currentUid', currentUid);
       }
 

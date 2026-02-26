@@ -52,10 +52,16 @@ export default function Index() {
       (res as any)?.user ??
       ((res as any)?.type === 'success' ? (res as any)?.data?.user : null);
 
+    // ✅ 학교 계정(@sc.gyo6.net)만 허용
+    const email = user?.email ?? '';
+    if (!email.endsWith('@sc.gyo6.net')) {
+      await GoogleSignin.signOut();
+      throw new Error('경북일고 학교 계정(@sc.gyo6.net)으로만 로그인할 수 있습니다.');
+    }
+
     // ✅ 앱 로그인 기준 저장 (uid 포함)
     try {
-      const uid = (user as any)?.id || (user as any)?.uid || (user as any)?.sub || user?.email || '-';
-      const email = user?.email ?? '-';
+      const uid = (user as any)?.id || (user as any)?.uid || (user as any)?.sub || email || '-';
       const name = user?.name ?? '-';
       await AsyncStorage.setItem('googleUser', JSON.stringify({ uid, email, name }));
     } catch {}

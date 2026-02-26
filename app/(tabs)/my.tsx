@@ -23,8 +23,9 @@ import {
   deleteDoc,
   writeBatch,
 } from 'firebase/firestore';
-import { useFocusEffect, useNavigation, CommonActions } from '@react-navigation/native';
+import { useFocusEffect } from '@react-navigation/native';
 import { GoogleSignin } from '@react-native-google-signin/google-signin';
+import { fireLogout } from '../../lib/authEvents';
 
 const COLORS = {
   BG: '#0F172A',
@@ -71,16 +72,7 @@ async function clearLocalData() {
   await AsyncStorage.multiRemove(ALL_STORAGE_KEYS);
 }
 
-// tabs 안에서 router.replace('/')는 /(tabs)/index 로 이동하므로
-// 루트 Stack을 직접 리셋해서 로그인 화면으로 이동
-function goToLogin(navigation: any) {
-  navigation.getParent()?.dispatch(
-    CommonActions.reset({ index: 0, routes: [{ name: 'index' }] })
-  );
-}
-
 export default function MyPageTab() {
-  const navigation = useNavigation();
   const [uid, setUid] = useState<string | null>(null);
   const [studentInfo, setStudentInfo] = useState<StudentInfo | null>(null);
 
@@ -168,7 +160,7 @@ export default function MyPageTab() {
             await GoogleSignin.signOut();
           } catch {}
           await clearLocalData();
-          goToLogin(navigation);
+          fireLogout();
         },
       },
     ]);
@@ -205,7 +197,7 @@ export default function MyPageTab() {
               // 구글 로그아웃 + 로컬 데이터 삭제
               try { await GoogleSignin.signOut(); } catch {}
               await clearLocalData();
-              goToLogin(navigation);
+              fireLogout();
             } catch (e) {
               console.log('DELETE_ACCOUNT_ERR', e);
               Alert.alert('오류', '계정 삭제 중 오류가 발생했습니다. 다시 시도해주세요.');

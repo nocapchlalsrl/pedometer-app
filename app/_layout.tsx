@@ -1,9 +1,14 @@
 // app/_layout.tsx
 import React, { useEffect, useState } from 'react';
-import { Stack } from 'expo-router';
+import { Stack, router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { GoogleSignin } from '@react-native-google-signin/google-signin';
+import { LogBox } from 'react-native';
+import { registerLogoutHandler } from '../lib/authEvents';
 import 'react-native-reanimated';
+
+// ✅ 개발 환경에서 keep awake 경고 억제 (라이브러리 내부 이슈, 프로덕션 무관)
+LogBox.ignoreLogs(['unable to activate keep awake', 'Unable to activate keep awake']);
 
 export const unstable_settings = {
   anchor: 'index',
@@ -17,6 +22,13 @@ export default function RootLayout() {
     GoogleSignin.configure({
       webClientId:
         '705515267078-haj4n0h3n9ubef79st2uiltj5u0vg5oh.apps.googleusercontent.com',
+    });
+
+    // ✅ 로그아웃/계정삭제 시 루트 레벨에서 네비게이션 처리
+    // tabs 안에서 router.replace('/')는 MainScreen으로 이동하는 버그가 있어
+    // 루트 레이아웃에서 처리함
+    registerLogoutHandler(() => {
+      router.replace('/');
     });
   }, []);
 

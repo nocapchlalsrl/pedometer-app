@@ -1,9 +1,10 @@
-// app/lib/foregroundSync.ts
+// lib/foregroundSync.ts
 import BackgroundService from 'react-native-background-actions';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { db } from './firebase';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { getTodayStepsAbsolute } from './healthSteps';
+import { extractUidFromGoogleUser, ymd } from './utils';
 
 const STORAGE_KEYS = {
   stepsDate: 'steps_today_date',
@@ -12,13 +13,7 @@ const STORAGE_KEYS = {
 };
 
 const POINT_UNIT_STEPS = 100;
-
-function ymd(date: Date) {
-  const yy = date.getFullYear();
-  const mm = String(date.getMonth() + 1).padStart(2, '0');
-  const dd = String(date.getDate()).padStart(2, '0');
-  return `${yy}-${mm}-${dd}`;
-}
+const MAX_DAILY_STEPS = 10_000; // 하루 최대 걸음 (= 최대 100P)
 
 async function ensureTodayReset() {
   const today = ymd(new Date());
@@ -42,17 +37,6 @@ async function writeLocalNumber(key: string, value: number) {
 
 function stepsToPoints(steps: number) {
   return Math.floor(steps / POINT_UNIT_STEPS);
-}
-
-function extractUidFromGoogleUser(raw: string): string | null {
-  try {
-    const u = JSON.parse(raw);
-    const uid =
-      u?.uid || u?.user?.uid || u?.sub || u?.id || u?.user?.id || u?.email;
-    return typeof uid === 'string' && uid.length > 0 ? uid : null;
-  } catch {
-    return null;
-  }
 }
 
 async function getUid(): Promise<string | null> {
@@ -92,11 +76,13 @@ async function flushToCloud(uid: string, steps: number, points: number) {
     { merge: true }
   );
 
-  await setDoc(
-    doc(db, 'users', uid, 'dailySteps', date),
-    { steps, updatedAt: serverTimestamp() },
-    { merge: true }
-  );
+  if (steps > 0) {
+    await setDoc(
+      doc(db, 'users', uid, 'dailySteps', date),
+      { steps, updatedAt: serverTimestamp() },
+      { merge: true }
+    );
+  }
 }
 
 // ✅ 서비스 루프: 10~30초 간격으로 절대값 읽어서 보정
@@ -122,10 +108,14 @@ const task = async (taskDataArguments: any) => {
       }
 
       const localSteps = await readLocalNumber(STORAGE_KEYS.stepsValue);
+      if (localSteps >= MAX_DAILY_STEPS) { // ✅ 일일 최대 도달
+        await sleep(intervalMs);
+        continue;
+      }
       const diff = abs - localSteps;
       if (diff > 0) {
-        // 너무 크게 튀면 제한(원하면 바꿔)
-        const safeDiff = diff > 8000 ? 8000 : diff;
+        const available = MAX_DAILY_STEPS - localSteps;
+        const safeDiff = Math.min(diff > 8000 ? 8000 : diff, available); // ✅ 초과분 잘라내기
         const nextSteps = localSteps + safeDiff;
         await writeLocalNumber(STORAGE_KEYS.stepsValue, nextSteps);
 
@@ -172,7 +162,12 @@ const options = {
 
 export async function startForegroundSync() {
   if (BackgroundService.isRunning()) return;
-  await BackgroundService.start(task, options as any);
+  // ✅ 라이브러리 내부 expo-keep-awake 실패 포함 모든 에러 삼킴
+  try {
+    await BackgroundService.start(task, options as any);
+  } catch (e) {
+    console.log('FG_SYNC_START_ERR', e);
+  }
 }
 
 export async function stopForegroundSync() {

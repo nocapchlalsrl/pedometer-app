@@ -1,13 +1,13 @@
 // app/index.tsx
 import React, { useState } from 'react';
 import {
-  SafeAreaView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
   Alert,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   GoogleSignin,
   statusCodes,
@@ -16,6 +16,9 @@ import {
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../lib/firebase';
+import { extractUidFromGoogleUser } from '../lib/utils';
 
 const SCHOOL_NAME = '경북일고';
 
@@ -43,15 +46,18 @@ export default function Index() {
     const res = await GoogleSignin.signIn();
 
     // ✅ 버전별 반환 형태 호환
+    // v16: { type: 'success', data: { user: { id, email, name, ... }, idToken, ... } }
+    // old: { user: { id, email, name, ... } }
     const user =
       (res as any)?.user ??
-      ((res as any)?.type === 'success' ? (res as any)?.data : null);
+      ((res as any)?.type === 'success' ? (res as any)?.data?.user : null);
 
-    // ✅ 앱 로그인 기준 저장
+    // ✅ 앱 로그인 기준 저장 (uid 포함)
     try {
+      const uid = (user as any)?.id || (user as any)?.uid || (user as any)?.sub || user?.email || '-';
       const email = user?.email ?? '-';
       const name = user?.name ?? '-';
-      await AsyncStorage.setItem('googleUser', JSON.stringify({ email, name }));
+      await AsyncStorage.setItem('googleUser', JSON.stringify({ uid, email, name }));
     } catch {}
 
     return res;
@@ -59,14 +65,48 @@ export default function Index() {
 
   const goAfterLogin = async () => {
     try {
+      const googleUser = await AsyncStorage.getItem('googleUser');
+      const currentUid = googleUser ? extractUidFromGoogleUser(googleUser) : null;
+
+      // ✅ 다른 계정으로 로그인한 경우 로컬 캐시 초기화
+      // steps_today_date 도 지워야 loadTodaySteps가 0으로 리셋 후
+      // loadFromCloud가 Firebase에서 새 계정의 정확한 값을 복구함
+      const storedUid = await AsyncStorage.getItem('currentUid');
+      if (currentUid && storedUid !== currentUid) {
+        await AsyncStorage.removeItem('studentInfo');
+        await AsyncStorage.removeItem('steps_today_date');
+        await AsyncStorage.removeItem('steps_today_value');
+        await AsyncStorage.setItem('currentUid', currentUid);
+      }
+
+      // 1) 로컬에 학생 정보 있으면 바로 진입
       const raw = await AsyncStorage.getItem('studentInfo');
       if (raw) {
-        const info = JSON.parse(raw);
-        (global as any).__studentInfo = info;
         router.replace('/(tabs)');
-      } else {
-        router.replace('/signup');
+        return;
       }
+
+      // 2) 로컬에 없으면 Firebase에서 복구 시도 (앱 데이터 초기화 후 재로그인 대비)
+      if (currentUid) {
+        const snap = await getDoc(doc(db, 'users', currentUid));
+        if (snap.exists()) {
+          const data = snap.data() as any;
+          if (data?.name && data?.grade && data?.classNo && data?.number) {
+            const info = {
+              grade: String(data.grade),
+              classNo: String(data.classNo),
+              number: String(data.number),
+              name: String(data.name),
+            };
+            await AsyncStorage.setItem('studentInfo', JSON.stringify(info));
+            router.replace('/(tabs)');
+            return;
+          }
+        }
+      }
+
+      // 3) Firebase에도 없으면 회원가입
+      router.replace('/signup');
     } catch (e) {
       console.log('AFTER_LOGIN_ERR', e);
       router.replace('/signup');

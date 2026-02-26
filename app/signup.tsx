@@ -35,7 +35,6 @@ export default function SignupScreen() {
 
     try {
       await AsyncStorage.setItem('studentInfo', JSON.stringify(info));
-      (global as any).__studentInfo = info;
       router.replace('/(tabs)');
     } catch (e) {
       console.log('STORAGE_SAVE_ERR', e);

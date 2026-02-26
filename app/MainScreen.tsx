@@ -1,7 +1,6 @@
 // app/MainScreen.tsx
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  SafeAreaView,
   StyleSheet,
   Text,
   View,
@@ -9,7 +8,9 @@ import {
   Alert,
   AppState,
   AppStateStatus,
+  Platform,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { Pedometer } from 'expo-sensors';
@@ -18,8 +19,17 @@ import * as Linking from 'expo-linking';
 import { useFocusEffect } from '@react-navigation/native';
 
 // ✅ Firebase
-import { db } from './lib/firebase';
+import { db } from '../lib/firebase';
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+
+// ✅ 공통 유틸
+import { extractUidFromGoogleUser, ymd } from '../lib/utils';
+
+// ✅ 플랫폼별 절대 걸음수 (Android: Health Connect, iOS: Pedometer)
+import { getTodayStepsAbsolute } from '../lib/healthSteps';
+
+// ✅ Android 포그라운드 서비스
+import { startForegroundSync, stopForegroundSync } from '../lib/foregroundSync';
 
 const COLORS = {
   NAVY: '#0F172A',
@@ -36,7 +46,7 @@ const STORAGE_KEYS = {
   stepsDate: 'steps_today_date',
   stepsValue: 'steps_today_value',
   pointsValue: 'points_value',
-  bgConsent: 'bg_consent', // ✅ 최초 1회 안내
+  bgConsent: 'bg_consent',
 };
 
 type StudentInfo = {
@@ -45,13 +55,6 @@ type StudentInfo = {
   number: string;
   name: string;
 };
-
-function ymd(date: Date) {
-  const yy = date.getFullYear();
-  const mm = String(date.getMonth() + 1).padStart(2, '0');
-  const dd = String(date.getDate()).padStart(2, '0');
-  return `${yy}-${mm}-${dd}`;
-}
 
 function startOfDay(date = new Date()) {
   const d = new Date(date);
@@ -67,20 +70,15 @@ async function openAppSettings() {
   }
 }
 
-function extractUidFromGoogleUser(raw: string): string | null {
-  try {
-    const u = JSON.parse(raw);
-    const uid =
-      u?.uid ||
-      u?.user?.uid ||
-      u?.sub ||
-      u?.id ||
-      u?.user?.id ||
-      u?.email; // 최후 수단
-    return typeof uid === 'string' && uid.length > 0 ? uid : null;
-  } catch {
-    return null;
-  }
+// ✅ 날씨 코드 → Ionicons 아이콘 이름 매핑 (Open-Meteo WMO 코드)
+function weatherCodeToIcon(code: number): string {
+  if (code === 0) return 'sunny-outline';
+  if (code <= 2) return 'partly-sunny-outline';
+  if (code <= 48) return 'cloudy-outline';
+  if (code <= 67) return 'rainy-outline';
+  if (code <= 77) return 'snow-outline';
+  if (code <= 82) return 'rainy-outline';
+  return 'thunderstorm-outline';
 }
 
 export default function MainScreen() {
@@ -90,6 +88,7 @@ export default function MainScreen() {
 
   const [currentPoints, setCurrentPoints] = useState<number>(0);
   const [weatherTemp, setWeatherTemp] = useState<number>(13);
+  const [weatherCode, setWeatherCode] = useState<number>(0);
 
   const [studentInfo, setStudentInfo] = useState<StudentInfo | null>(null);
 
@@ -108,8 +107,12 @@ export default function MainScreen() {
 
   const lastCloudWriteAtRef = useRef<number>(0);
 
+  // ✅ stale closure 방지: studentInfo를 ref로도 관리
+  const studentInfoRef = useRef<StudentInfo | null>(null);
+
   // ✅ 포인트 규칙
-  const POINT_UNIT_STEPS = 100; // 100걸음 = 1포인트
+  const POINT_UNIT_STEPS = 100;
+  const MAX_DAILY_STEPS = 10_000; // 하루 최대 걸음 (= 최대 100P)
   const stepsToPoints = (steps: number) => Math.floor(steps / POINT_UNIT_STEPS);
 
   // ===== Firebase refs =====
@@ -156,6 +159,8 @@ export default function MainScreen() {
       const safe = Number.isFinite(v) && v >= 0 ? v : 0;
       baseStepsRef.current = safe;
       setStepCount(safe);
+      // ✅ 로컬 캐시 기준으로 pendingSteps 복원
+      pendingStepsRef.current = safe % POINT_UNIT_STEPS;
     } catch (e) {
       console.log('LOAD_STEPS_ERR', e);
       baseStepsRef.current = 0;
@@ -180,12 +185,13 @@ export default function MainScreen() {
     if (!uid) return;
 
     const now = Date.now();
-    if (now - lastCloudWriteAtRef.current < 5000) return; // 5초 스로틀
+    if (now - lastCloudWriteAtRef.current < 5000) return;
     lastCloudWriteAtRef.current = now;
 
     const date = ymd(new Date());
     const steps = baseStepsRef.current;
     const points = pointsRef.current;
+    const info = studentInfoRef.current; // ✅ ref 사용 (stale closure 방지)
 
     try {
       await setDoc(
@@ -193,23 +199,27 @@ export default function MainScreen() {
         {
           points,
           updatedAt: serverTimestamp(),
-          ...(studentInfo
+          ...(info
             ? {
-                name: studentInfo.name,
-                grade: studentInfo.grade,
-                classNo: studentInfo.classNo,
-                number: studentInfo.number,
+                name: info.name,
+                grade: info.grade,
+                classNo: info.classNo,
+                number: info.number,
               }
             : {}),
         },
         { merge: true }
       );
 
-      await setDoc(
-        dailyStepsDocRef(uid, date),
-        { steps, updatedAt: serverTimestamp() },
-        { merge: true }
-      );
+      // ✅ steps > 0 일 때만 저장: 세션 시작 직후 baseStepsRef=0 상태에서
+      // Firebase를 덮어쓰는 것을 방지 (탭 전환 시 0으로 덮어써지는 버그 수정)
+      if (steps > 0) {
+        await setDoc(
+          dailyStepsDocRef(uid, date),
+          { steps, updatedAt: serverTimestamp() },
+          { merge: true }
+        );
+      }
     } catch (e) {
       console.log('CLOUD_FLUSH_ERR', e);
     }
@@ -236,6 +246,8 @@ export default function MainScreen() {
         const safe = Number.isFinite(s) && s >= 0 ? s : 0;
         baseStepsRef.current = safe;
         setStepCount(safe);
+        // ✅ 로드된 걸음 기준으로 pendingSteps 복원 (다음 포인트까지 남은 걸음 수)
+        pendingStepsRef.current = safe % POINT_UNIT_STEPS;
         await AsyncStorage.setItem(STORAGE_KEYS.stepsDate, date);
         await AsyncStorage.setItem(STORAGE_KEYS.stepsValue, String(safe));
       }
@@ -244,18 +256,18 @@ export default function MainScreen() {
     }
   };
 
-  // ✅ 백그라운드/화면꺼짐 누락 보정(절대값)
+  // ✅ 플랫폼별 절대값 보정 (Android: Health Connect, iOS: Pedometer)
   const syncAbsoluteTodaySteps = async () => {
     try {
-      const res = await Pedometer.getStepCountAsync(startOfDay(new Date()), new Date());
-      const abs = res?.steps ?? 0;
+      const abs = await getTodayStepsAbsolute();
       if (!Number.isFinite(abs) || abs < 0) return;
+      if (baseStepsRef.current >= MAX_DAILY_STEPS) return; // ✅ 일일 최대 도달
 
       const diff = abs - baseStepsRef.current;
       if (diff <= 0) return;
 
-      // 안전장치
-      const safeDiff = diff > 5000 ? 5000 : diff;
+      const available = MAX_DAILY_STEPS - baseStepsRef.current;
+      const safeDiff = Math.min(diff > 5000 ? 5000 : diff, available); // ✅ 초과분 잘라내기
 
       const newSteps = baseStepsRef.current + safeDiff;
       baseStepsRef.current = newSteps;
@@ -302,16 +314,18 @@ export default function MainScreen() {
         lastWatchStepsRef.current = current;
 
         if (delta <= 0) return;
-
-        // ✅ 너무 큰 튐 방지 (필요하면 조정)
         if (delta > 50) return;
+        if (baseStepsRef.current >= MAX_DAILY_STEPS) return; // ✅ 일일 최대 도달
 
-        const newSteps = baseStepsRef.current + delta;
+        const available = MAX_DAILY_STEPS - baseStepsRef.current;
+        const actualDelta = Math.min(delta, available); // ✅ 초과분 잘라내기
+
+        const newSteps = baseStepsRef.current + actualDelta;
         baseStepsRef.current = newSteps;
         setStepCount(newSteps);
         saveTodaySteps(newSteps).catch(() => {});
 
-        pendingStepsRef.current += delta;
+        pendingStepsRef.current += actualDelta;
         const addP = stepsToPoints(pendingStepsRef.current);
         if (addP > 0) {
           pendingStepsRef.current -= addP * POINT_UNIT_STEPS;
@@ -330,6 +344,16 @@ export default function MainScreen() {
       console.log('PEDO_WATCH_ERR', e);
     }
   };
+
+  // ✅ 탭 이탈 시 즉시 Firebase 동기화 (shop 트랜잭션이 항상 최신값 읽도록)
+  useFocusEffect(
+    useCallback(() => {
+      return () => {
+        lastCloudWriteAtRef.current = 0; // throttle 우회
+        flushToCloud().catch(() => {});
+      };
+    }, [])
+  );
 
   // ===== guard (로그인/학생정보/uid) =====
   useFocusEffect(
@@ -363,8 +387,7 @@ export default function MainScreen() {
           const info = JSON.parse(student) as StudentInfo;
           if (!alive) return;
           setStudentInfo(info);
-
-          // ✅ 서버값 우선 로드(재설치 복구)
+          studentInfoRef.current = info; // ✅ ref 동기화 (flushToCloud stale closure 방지)
           await loadFromCloud(uid);
         } catch {
           if (!alive) return;
@@ -379,11 +402,24 @@ export default function MainScreen() {
     }, [])
   );
 
-  const studentLabel = studentInfo
-    ? `${studentInfo.grade}${studentInfo.classNo}${studentInfo.number} ${studentInfo.name}`
-    : '';
+  // ===== 날씨 fetch (Open-Meteo, 무료/무키) =====
+  useEffect(() => {
+    const fetchWeather = async () => {
+      try {
+        const res = await fetch(
+          'https://api.open-meteo.com/v1/forecast?latitude=36.57&longitude=128.51&current=temperature_2m,weather_code'
+        );
+        const json = await res.json();
+        setWeatherTemp(Math.round(json?.current?.temperature_2m ?? 13));
+        setWeatherCode(Number(json?.current?.weather_code ?? 0));
+      } catch (e) {
+        console.log('WEATHER_ERR', e);
+      }
+    };
+    fetchWeather();
+  }, []);
 
-  // ✅ 최초 1회 “백그라운드 동기화” 안내 팝업
+  // ✅ 최초 1회 백그라운드 동기화 동의 팝업 (Android만 서비스 시작)
   useEffect(() => {
     let mounted = true;
 
@@ -391,11 +427,11 @@ export default function MainScreen() {
       try {
         const saved = await AsyncStorage.getItem(STORAGE_KEYS.bgConsent);
         if (!mounted) return;
-        if (saved !== null) return;
+        if (saved !== null) return; // 이미 답변함 → init에서 처리됨
 
         Alert.alert(
-          '백그라운드 동기화',
-          '앱을 사용하지 않는 동안(화면 꺼짐/백그라운드 포함)\n기기(OS)가 걸음 수를 누적합니다.\n\n앱을 다시 열면 누적된 걸음 수를 자동으로 동기화하여 반영합니다.\n\n허용하시겠습니까?',
+          '백그라운드 걸음 동기화',
+          '화면이 꺼지거나 앱이 백그라운드 상태일 때도\n걸음 수를 실시간으로 동기화합니다.\n\n허용하면 상태바에 만보기 알림이 상주합니다.\n(알림을 눌러 앱으로 돌아올 수 있습니다)\n\n허용하시겠습니까?',
           [
             {
               text: '거부',
@@ -411,6 +447,10 @@ export default function MainScreen() {
               onPress: async () => {
                 try {
                   await AsyncStorage.setItem(STORAGE_KEYS.bgConsent, 'granted');
+                  // ✅ 동의 후 서비스 시작 (딜레이로 Alert dismiss 완료 후 시작)
+                  if (Platform.OS === 'android') {
+                    setTimeout(() => { startForegroundSync(); }, 500);
+                  }
                 } catch {}
               },
             },
@@ -435,6 +475,17 @@ export default function MainScreen() {
       await loadTodaySteps();
       await loadLocalPoints();
 
+      // ✅ 재로그인/앱 데이터 초기화 후 Firebase에서 최신값 복구
+      // guard(useFocusEffect)와 동시에 실행되면 race condition 발생 가능하므로
+      // init 안에서 먼저 Firebase를 읽어 pedometer 시작 전에 올바른 값을 확보
+      const googleRaw = await AsyncStorage.getItem('googleUser');
+      const initUid = googleRaw ? extractUidFromGoogleUser(googleRaw) : null;
+      if (initUid) {
+        await loadFromCloud(initUid);
+        uidRef.current = initUid; // ✅ pedometer 시작 전에 uid 확보 (flushToCloud가 null 아닌 uid 사용)
+      }
+      if (!mounted) return;
+
       try {
         const available = await Pedometer.isAvailableAsync();
         if (!mounted) return;
@@ -453,7 +504,7 @@ export default function MainScreen() {
             setPermission('denied');
             Alert.alert(
               '활동 인식 권한 필요',
-              '걸음 수를 측정하려면 “신체 활동(활동 인식)” 권한을 허용해야 합니다.',
+              '걸음 수를 측정하려면 "신체 활동(활동 인식)" 권한을 허용해야 합니다.',
               [
                 { text: '취소', style: 'cancel' },
                 { text: '설정 열기', onPress: openAppSettings },
@@ -467,10 +518,17 @@ export default function MainScreen() {
           setPermission('unknown');
         }
 
-        // ✅ 시작 시 1회 보정
         await syncAbsoluteTodaySteps();
-
         await startWatch();
+
+        // ✅ Android: 이전에 동의한 경우에만 포그라운드 서비스 시작
+        // 네비게이션 전환이 완전히 끝난 후 시작해야 LogBox 크래시 방지
+        if (Platform.OS === 'android') {
+          const consent = await AsyncStorage.getItem(STORAGE_KEYS.bgConsent);
+          if (consent === 'granted') {
+            setTimeout(() => { startForegroundSync(); }, 2000);
+          }
+        }
       } catch (e) {
         console.log('PEDO_INIT_ERR', e);
         if (!mounted) return;
@@ -489,10 +547,7 @@ export default function MainScreen() {
         await loadTodaySteps();
         await loadLocalPoints();
         if (uidRef.current) await loadFromCloud(uidRef.current);
-
-        // ✅ 앱 다시 켰을 때 누락분 보정(핵심)
         await syncAbsoluteTodaySteps();
-
         if (isAvailableRef.current) await startWatch();
       }
 
@@ -507,9 +562,17 @@ export default function MainScreen() {
         subAppState.remove();
       } catch {}
       stopWatch();
+      // ✅ Android: 앱 종료 시 포그라운드 서비스 중지
+      if (Platform.OS === 'android') {
+        stopForegroundSync().catch(() => {});
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const studentLabel = studentInfo
+    ? `${studentInfo.grade}${studentInfo.classNo}${studentInfo.number} ${studentInfo.name}`
+    : '';
 
   const statusText = useMemo(() => {
     if (isAvailable === false) return '이 기기는 만보기 센서를 지원하지 않음';
@@ -530,7 +593,7 @@ export default function MainScreen() {
       <View style={styles.container}>
         <View style={styles.topInfoBar}>
           <View style={styles.weather}>
-            <Ionicons name="cloudy-night-outline" size={32} color={COLORS.TEXT_GRAY} />
+            <Ionicons name={weatherCodeToIcon(weatherCode) as any} size={32} color={COLORS.TEXT_GRAY} />
             <Text style={styles.temp}>{weatherTemp}°C</Text>
           </View>
 
@@ -557,16 +620,17 @@ export default function MainScreen() {
             <View style={styles.lcd}>
               <Text style={styles.digits}>{String(stepCount).padStart(5, '0')}</Text>
             </View>
-            <Text style={styles.stepUnit}>걸음</Text>
+            <Text style={styles.stepUnit}>
+              걸음 / 10,000
+            </Text>
             <Text style={styles.smallInfo}>
-              화면이 꺼져도 기기(OS)는 걸음 수를 누적합니다.
-              {'\n'}
-              앱을 다시 열면 누락분을 자동으로 동기화(보정)합니다.
+              {stepCount >= MAX_DAILY_STEPS
+                ? '오늘 목표를 달성했습니다! (최대 100P 획득)'
+                : `남은 획득 가능 포인트: ${100 - Math.floor(stepCount / POINT_UNIT_STEPS)}P\n앱을 다시 열면 누락분을 자동 동기화합니다.`}
             </Text>
           </View>
         </View>
 
-        {/* ✅ 하단 탭이 이미 있으니, 여기엔 버튼 추가 안 함 */}
         <View style={{ height: 12 }} />
       </View>
     </SafeAreaView>

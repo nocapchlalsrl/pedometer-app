@@ -1,7 +1,6 @@
 // app/(tabs)/shop.tsx
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  SafeAreaView,
   View,
   Text,
   TouchableOpacity,
@@ -9,8 +8,10 @@ import {
   StyleSheet,
   FlatList,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { db } from '../lib/firebase';
+import { extractUidFromGoogleUser } from '../../lib/utils';
+import { db } from '../../lib/firebase';
 import {
   doc,
   getDoc,
@@ -40,22 +41,6 @@ type ShopItem = {
   name: string;
   price: number;
 };
-
-function extractUidFromGoogleUser(raw: string): string | null {
-  try {
-    const u = JSON.parse(raw);
-    const uid =
-      u?.uid ||
-      u?.user?.uid ||
-      u?.sub ||
-      u?.id ||
-      u?.user?.id ||
-      u?.email;
-    return typeof uid === 'string' && uid.length > 0 ? uid : null;
-  } catch {
-    return null;
-  }
-}
 
 export default function ShopScreen() {
   const [uid, setUid] = useState<string | null>(null);
@@ -92,14 +77,13 @@ export default function ShopScreen() {
         if (Number.isFinite(local) && local >= 0) setPoints(local);
       } catch {}
 
-      // 서버 1회 보정
+      // 서버 1회 보정 (로컬보다 높을 때만 반영, AsyncStorage는 덮어쓰지 않음)
       try {
         const snap = await getDoc(userRef(u));
         if (snap.exists()) {
           const p = Number((snap.data() as any)?.points ?? 0);
           const safe = Number.isFinite(p) && p >= 0 ? p : 0;
-          setPoints(safe);
-          await AsyncStorage.setItem(STORAGE_KEYS.pointsValue, String(safe));
+          setPoints((prev) => Math.max(prev, safe));
         }
       } catch {}
     };
@@ -112,14 +96,12 @@ export default function ShopScreen() {
 
     const unsub = onSnapshot(
       userRef(uid),
-      async (snap) => {
+      (snap) => {
         if (!snap.exists()) return;
         const p = Number((snap.data() as any)?.points ?? 0);
         const safe = Number.isFinite(p) && p >= 0 ? p : 0;
-        setPoints(safe);
-        try {
-          await AsyncStorage.setItem(STORAGE_KEYS.pointsValue, String(safe));
-        } catch {}
+        // ✅ Firebase가 로컬보다 낮으면(미동기화) 무시 → 포인트 튀는 현상 방지
+        setPoints((prev) => Math.max(prev, safe));
       },
       (err) => console.log('POINTS_SUB_ERR', err)
     );

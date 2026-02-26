@@ -1,8 +1,10 @@
-// app/(tabs)/mypage.tsx
+// app/(tabs)/my.tsx
 import React, { useEffect, useMemo, useState } from 'react';
-import { SafeAreaView, StyleSheet, Text, View, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { db } from '../lib/firebase';
+import { extractUidFromGoogleUser } from '../../lib/utils';
+import { db } from '../../lib/firebase';
 import {
   doc,
   onSnapshot,
@@ -27,22 +29,6 @@ type StudentInfo = {
   number: string;
   name: string;
 };
-
-function extractUidFromGoogleUser(raw: string): string | null {
-  try {
-    const u = JSON.parse(raw);
-    const uid =
-      u?.uid ||
-      u?.user?.uid ||
-      u?.sub ||
-      u?.id ||
-      u?.user?.id ||
-      u?.email;
-    return typeof uid === 'string' && uid.length > 0 ? uid : null;
-  } catch {
-    return null;
-  }
-}
 
 function fmtTS(ts?: Timestamp | null) {
   if (!ts) return '';

@@ -38,7 +38,7 @@ const COLORS = {
 };
 
 // ✅ 개인정보처리방침 URL (배포 후 실제 URL로 교체)
-const PRIVACY_POLICY_URL = 'https://sites.google.com/sc.gyo6.net/pedometer-privacy';
+const PRIVACY_POLICY_URL = 'https://nocapchlalsrl.github.io/pedometer-app/privacy.html';
 
 const ALL_STORAGE_KEYS = [
   'googleUser',

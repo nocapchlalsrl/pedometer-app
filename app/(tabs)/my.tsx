@@ -1,6 +1,15 @@
 // app/(tabs)/my.tsx
 import React, { useEffect, useMemo, useState } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, ActivityIndicator } from 'react-native';
+import {
+  StyleSheet,
+  Text,
+  View,
+  TouchableOpacity,
+  ActivityIndicator,
+  Alert,
+  Linking,
+  ScrollView,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { extractUidFromGoogleUser } from '../../lib/utils';
@@ -11,8 +20,12 @@ import {
   collection,
   getDocs,
   Timestamp,
+  deleteDoc,
+  writeBatch,
 } from 'firebase/firestore';
 import { useFocusEffect } from '@react-navigation/native';
+import { GoogleSignin } from '@react-native-google-signin/google-signin';
+import { router } from 'expo-router';
 
 const COLORS = {
   BG: '#0F172A',
@@ -21,7 +34,21 @@ const COLORS = {
   SUB: '#94A3B8',
   GOLD: '#f9c526',
   BORDER: '#334155',
+  DANGER: '#EF4444',
 };
+
+// ✅ 개인정보처리방침 URL (배포 후 실제 URL로 교체)
+const PRIVACY_POLICY_URL = 'https://sites.google.com/sc.gyo6.net/pedometer-privacy';
+
+const ALL_STORAGE_KEYS = [
+  'googleUser',
+  'studentInfo',
+  'currentUid',
+  'steps_today_date',
+  'steps_today_value',
+  'points_value',
+  'bg_consent',
+];
 
 type StudentInfo = {
   grade: string;
@@ -41,6 +68,10 @@ function fmtTS(ts?: Timestamp | null) {
   return `${yy}-${mm}-${dd} ${hh}:${mi}`;
 }
 
+async function clearLocalData() {
+  await AsyncStorage.multiRemove(ALL_STORAGE_KEYS);
+}
+
 export default function MyPageTab() {
   const [uid, setUid] = useState<string | null>(null);
   const [studentInfo, setStudentInfo] = useState<StudentInfo | null>(null);
@@ -50,6 +81,7 @@ export default function MyPageTab() {
 
   const [totalSteps, setTotalSteps] = useState(0);
   const [loadingTotal, setLoadingTotal] = useState(false);
+  const [deletingAccount, setDeletingAccount] = useState(false);
 
   const studentLabel = useMemo(() => {
     if (!studentInfo) return '';
@@ -90,7 +122,7 @@ export default function MyPageTab() {
     return () => unsub();
   }, [uid]);
 
-  // 총 걸음수 = dailySteps 전부 합(가장 단순/안전)
+  // 총 걸음수
   const loadTotalSteps = async () => {
     if (!uid) return;
     setLoadingTotal(true);
@@ -110,7 +142,6 @@ export default function MyPageTab() {
     }
   };
 
-  // 탭 들어올 때마다 총합 새로고침
   useFocusEffect(
     React.useCallback(() => {
       loadTotalSteps();
@@ -118,9 +149,71 @@ export default function MyPageTab() {
     }, [uid])
   );
 
+  // ===== 로그아웃 =====
+  const handleLogout = () => {
+    Alert.alert('로그아웃', '로그아웃 하시겠습니까?', [
+      { text: '취소', style: 'cancel' },
+      {
+        text: '로그아웃',
+        onPress: async () => {
+          try {
+            await GoogleSignin.signOut();
+          } catch {}
+          await clearLocalData();
+          router.replace('/');
+        },
+      },
+    ]);
+  };
+
+  // ===== 계정 삭제 =====
+  const handleDeleteAccount = () => {
+    Alert.alert(
+      '계정 삭제',
+      '계정을 삭제하면 모든 걸음 기록과 포인트가 영구적으로 삭제됩니다.\n\n정말 삭제하시겠습니까?',
+      [
+        { text: '취소', style: 'cancel' },
+        {
+          text: '삭제',
+          style: 'destructive',
+          onPress: async () => {
+            if (!uid) return;
+            setDeletingAccount(true);
+            try {
+              // 서브컬렉션(dailySteps, purchases) 전체 삭제
+              const batch = writeBatch(db);
+
+              const dailySnap = await getDocs(collection(db, 'users', uid, 'dailySteps'));
+              dailySnap.forEach((d) => batch.delete(d.ref));
+
+              const purchaseSnap = await getDocs(collection(db, 'users', uid, 'purchases'));
+              purchaseSnap.forEach((d) => batch.delete(d.ref));
+
+              await batch.commit();
+
+              // 유저 문서 삭제
+              await deleteDoc(doc(db, 'users', uid));
+
+              // 구글 로그아웃 + 로컬 데이터 삭제
+              try { await GoogleSignin.signOut(); } catch {}
+              await clearLocalData();
+
+              router.replace('/');
+            } catch (e) {
+              console.log('DELETE_ACCOUNT_ERR', e);
+              Alert.alert('오류', '계정 삭제 중 오류가 발생했습니다. 다시 시도해주세요.');
+            } finally {
+              setDeletingAccount(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
   return (
     <SafeAreaView style={styles.safeArea}>
-      <View style={styles.container}>
+      <ScrollView contentContainerStyle={styles.container}>
         <Text style={styles.title}>마이페이지</Text>
         <Text style={styles.subtitle}>내 정보 / 포인트 / 총 걸음수</Text>
 
@@ -148,20 +241,38 @@ export default function MyPageTab() {
           </View>
         </View>
 
-        <View style={styles.hintCard}>
-          <Text style={styles.hintTitle}>참고</Text>
-          <Text style={styles.hintText}>
-            총 걸음수는 Firebase에 저장된 날짜별(dailySteps) 합계로 계산합니다.
-          </Text>
-        </View>
-      </View>
+        {/* 로그아웃 */}
+        <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
+          <Text style={styles.logoutText}>로그아웃</Text>
+        </TouchableOpacity>
+
+        {/* 개인정보처리방침 */}
+        <TouchableOpacity
+          style={styles.linkBtn}
+          onPress={() => Linking.openURL(PRIVACY_POLICY_URL)}
+        >
+          <Text style={styles.linkText}>개인정보처리방침</Text>
+        </TouchableOpacity>
+
+        {/* 계정 삭제 */}
+        <TouchableOpacity
+          style={styles.deleteBtn}
+          onPress={handleDeleteAccount}
+          disabled={deletingAccount}
+        >
+          {deletingAccount
+            ? <ActivityIndicator color={COLORS.DANGER} />
+            : <Text style={styles.deleteText}>계정 삭제</Text>
+          }
+        </TouchableOpacity>
+      </ScrollView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: COLORS.BG },
-  container: { flex: 1, padding: 20 },
+  container: { padding: 20 },
   title: { color: COLORS.TEXT, fontSize: 26, fontWeight: '900' },
   subtitle: { color: COLORS.SUB, marginTop: 6, marginBottom: 18 },
 
@@ -187,14 +298,29 @@ const styles = StyleSheet.create({
   },
   refreshText: { color: COLORS.BG, fontWeight: '900' },
 
-  hintCard: {
-    backgroundColor: '#0B1220',
-    borderRadius: 16,
-    padding: 16,
+  logoutBtn: {
+    marginTop: 24,
+    backgroundColor: COLORS.PANEL,
+    borderRadius: 14,
+    paddingVertical: 16,
+    alignItems: 'center',
     borderWidth: 1,
     borderColor: COLORS.BORDER,
-    marginTop: 10,
   },
-  hintTitle: { color: COLORS.TEXT, fontWeight: '900' },
-  hintText: { color: COLORS.SUB, marginTop: 6, lineHeight: 18 },
+  logoutText: { color: COLORS.TEXT, fontSize: 16, fontWeight: '700' },
+
+  linkBtn: {
+    marginTop: 10,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  linkText: { color: COLORS.SUB, fontSize: 13, textDecorationLine: 'underline' },
+
+  deleteBtn: {
+    marginTop: 4,
+    marginBottom: 32,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  deleteText: { color: COLORS.DANGER, fontSize: 13, fontWeight: '700' },
 });

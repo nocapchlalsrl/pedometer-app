@@ -19,6 +19,7 @@
       }
     },
     "android": {
+      "googleServicesFile": "./google-services.json",
       "package": "com.seoma.pedmeter",
       "permissions": [
         "ACTIVITY_RECOGNITION",

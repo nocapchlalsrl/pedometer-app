@@ -26,6 +26,15 @@ import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 // ✅ 공통 유틸
 import { extractUidFromGoogleUser, ymd } from '../lib/utils';
 
+// ✅ 실험 모듈
+import {
+  ExperimentWeek,
+  canEarnPoints,
+  getExperimentWeek,
+  getInExperiment,
+  weekLabel,
+} from '../lib/experiment';
+
 // ✅ 플랫폼별 절대 걸음수 (Android: Health Connect, iOS: Pedometer)
 import { getTodayStepsAbsolute } from '../lib/healthSteps';
 
@@ -48,6 +57,7 @@ const STORAGE_KEYS = {
   stepsValue: 'steps_today_value',
   pointsValue: 'points_value',
   bgConsent: 'bg_consent',
+  watchGuide: 'watch_guide_shown',
 };
 
 type StudentInfo = {
@@ -92,6 +102,12 @@ export default function MainScreen() {
   const [weatherCode, setWeatherCode] = useState<number>(0);
 
   const [studentInfo, setStudentInfo] = useState<StudentInfo | null>(null);
+
+  // ✅ 실험 상태
+  const [inExperiment, setInExperiment] = useState<boolean>(false);
+  const [experimentWeek, setExperimentWeek] = useState<ExperimentWeek>(0);
+  const inExperimentRef = useRef<boolean>(false);
+  const experimentWeekRef = useRef<ExperimentWeek>(0);
 
   // ✅ 최신값 refs
   const baseStepsRef = useRef<number>(0);
@@ -234,6 +250,7 @@ export default function MainScreen() {
       if (uSnap.exists()) {
         const data = uSnap.data() as any;
         const p = Number(data?.points ?? 0);
+
         if (Number.isFinite(p) && p >= 0) {
           setCurrentPoints(p);
           pointsRef.current = p;
@@ -281,12 +298,15 @@ export default function MainScreen() {
       if (addP > 0) {
         pendingStepsRef.current -= addP * POINT_UNIT_STEPS;
 
-        setCurrentPoints((prev) => {
-          const next = prev + addP;
-          pointsRef.current = next;
-          saveLocalPoints(next).catch(() => {});
-          return next;
-        });
+        // ✅ 실험: 포인트 지급 가능 여부 확인
+        if (canEarnPoints(inExperimentRef.current, experimentWeekRef.current)) {
+          setCurrentPoints((prev) => {
+            const next = prev + addP;
+            pointsRef.current = next;
+            saveLocalPoints(next).catch(() => {});
+            return next;
+          });
+        }
       }
 
       flushToCloud().catch(() => {});
@@ -332,12 +352,15 @@ export default function MainScreen() {
         if (addP > 0) {
           pendingStepsRef.current -= addP * POINT_UNIT_STEPS;
 
-          setCurrentPoints((prev) => {
-            const next = prev + addP;
-            pointsRef.current = next;
-            saveLocalPoints(next).catch(() => {});
-            return next;
-          });
+          // ✅ 실험: 포인트 지급 가능 여부 확인
+          if (canEarnPoints(inExperimentRef.current, experimentWeekRef.current)) {
+            setCurrentPoints((prev) => {
+              const next = prev + addP;
+              pointsRef.current = next;
+              saveLocalPoints(next).catch(() => {});
+              return next;
+            });
+          }
         }
 
         flushToCloud().catch(() => {});
@@ -471,6 +494,46 @@ export default function MainScreen() {
     };
   }, []);
 
+  // ✅ 최초 1회 갤럭시 워치 연동 안내 팝업 (Android만)
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    let mounted = true;
+
+    const showWatchGuideOnce = async () => {
+      try {
+        const saved = await AsyncStorage.getItem(STORAGE_KEYS.watchGuide);
+        if (!mounted) return;
+        if (saved !== null) return;
+
+        // bgConsent 팝업과 겹치지 않도록 1초 지연
+        await new Promise<void>(res => setTimeout(res, 1000));
+        if (!mounted) return;
+
+        Alert.alert(
+          '갤럭시 워치 연동 안내',
+          '갤럭시 워치를 사용 중이라면,\nSamsung Health 앱에서\nHealth Connect 연동을 켜주세요.\n\n워치에서 측정한 걸음 수가\n자동으로 반영됩니다.\n\nSamsung Health → 설정 →\nHealth Connect 연결',
+          [
+            {
+              text: '확인했어요',
+              onPress: async () => {
+                try {
+                  await AsyncStorage.setItem(STORAGE_KEYS.watchGuide, 'shown');
+                } catch {}
+              },
+            },
+          ]
+        );
+      } catch (e) {
+        console.log('WATCH_GUIDE_ERR', e);
+      }
+    };
+
+    showWatchGuideOnce();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
   // ===== init =====
   useEffect(() => {
     let mounted = true;
@@ -485,6 +548,16 @@ export default function MainScreen() {
       const googleRaw = await AsyncStorage.getItem('googleUser');
       const initUid = googleRaw ? extractUidFromGoogleUser(googleRaw) : null;
       if (initUid) {
+        // ✅ 실험 주차/참여 여부 로드 (loadFromCloud 전에 ref 세팅해야 3주차 리셋 작동)
+        const [expStatus, isInExp] = await Promise.all([
+          getExperimentWeek(),
+          getInExperiment(initUid),
+        ]);
+        setExperimentWeek(expStatus.week);
+        setInExperiment(isInExp);
+        experimentWeekRef.current = expStatus.week;
+        inExperimentRef.current = isInExp;
+
         await loadFromCloud(initUid);
         uidRef.current = initUid; // ✅ pedometer 시작 전에 uid 확보 (flushToCloud가 null 아닌 uid 사용)
       }
@@ -577,7 +650,7 @@ export default function MainScreen() {
   }, []);
 
   const studentLabel = studentInfo
-    ? `${studentInfo.grade}${studentInfo.classNo}${studentInfo.number} ${studentInfo.name}`
+    ? `${studentInfo.grade}${studentInfo.classNo}${String(studentInfo.number).padStart(2, '0')} ${studentInfo.name}`
     : '';
 
   const statusText = useMemo(() => {
@@ -613,6 +686,12 @@ export default function MainScreen() {
         </View>
 
         <Text style={[styles.status, { color: statusColor }]}>{statusText}</Text>
+
+        {inExperiment && experimentWeek > 0 && (
+          <Text style={styles.experimentBadge}>
+            [실험 참여중] {weekLabel(experimentWeek)}
+          </Text>
+        )}
 
         {permission === 'denied' && (
           <TouchableOpacity style={styles.settingsBtn} onPress={openAppSettings}>
@@ -669,6 +748,7 @@ const styles = StyleSheet.create({
   pCount: { fontSize: 18, fontWeight: 'bold', color: COLORS.DARK_BG },
 
   status: { marginTop: 6, fontSize: 13, fontWeight: '800' },
+  experimentBadge: { marginTop: 4, fontSize: 11, color: '#94A3B8', fontWeight: '700' },
 
   settingsBtn: {
     marginTop: 10,

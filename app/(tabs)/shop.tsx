@@ -51,10 +51,10 @@ export default function ShopScreen() {
   // ✅ 상점 아이템(하드코딩)
   const items: ShopItem[] = useMemo(
     () => [
-      { id: 'item_speed', name: '스피드 부스트(30분)', price: 1 },
-      { id: 'item_skin', name: '스킨 상자', price: 30 },
-      { id: 'item_ticket', name: '추가 뽑기권', price: 50 },
-      { id: 'item_badge', name: '뱃지(프로)', price: 100 },
+      { id: 'item_speed', name: '메가커피 쿠폰 3.000원', price: 1400 },
+      { id: 'item_skin', name: '맘스터치 싸이버거 쿠폰', price: 300 },
+      { id: 'item_ticket', name: '테스트용 최민기', price: 1 },
+      { id: 'item_badge', name: '컴포즈 쿠폰 4000원', price: 1600 },
     ],
     []
   );
@@ -225,7 +225,7 @@ export default function ShopScreen() {
           </View>
         )}
         ListFooterComponent={
-          <Text style={styles.footer}>포인트는 메인/상점 간 실시간 동기화됨</Text>
+          <Text style={styles.footer}>포인트로 상점에 있는 물품들을 구매할 수 있습니다!</Text>
         }
       />
     </SafeAreaView>

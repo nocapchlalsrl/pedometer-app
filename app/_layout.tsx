@@ -19,7 +19,9 @@ export default function RootLayout() {
   useEffect(() => {
     GoogleSignin.configure({
       webClientId:
-        '705515267078-haj4n0h3n9ubef79st2uiltj5u0vg5oh.apps.googleusercontent.com',
+        '662366415318-7p9ff58dnk93a9an7a0s9pemn4pa28ij.apps.googleusercontent.com',
+      iosClientId:
+        '662366415318-2fmcnns4gmd9mvfd7nvdmdmcmbf9lcr3.apps.googleusercontent.com',
     });
   }, []);
 
@@ -29,6 +31,8 @@ export default function RootLayout() {
       try {
         await AsyncStorage.getItem('googleUser');
         await AsyncStorage.getItem('studentInfo');
+
+
       } catch (e) {
         console.log('BOOT_ERR', e);
       } finally {

@@ -106,14 +106,14 @@ export default function LedgerTab() {
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
         <Text style={styles.title}>사용내역</Text>
-        <Text style={styles.subtitle}>포인트 변동(현재는 구매 사용만) 내역</Text>
+        <Text style={styles.subtitle}>사용한 포인트 내역을 확인할 수 있습니다. 문의는 디버깅 동아리</Text>
 
         {loading ? (
           <ActivityIndicator color={COLORS.YELLOW} style={{ marginTop: 30 }} />
         ) : list.length === 0 ? (
           <View style={styles.card}>
             <Text style={styles.cardTitle}>아직 내역이 없어요</Text>
-            <Text style={styles.cardSub}>상점에서 구매하면 자동으로 여기에 쌓임</Text>
+            <Text style={styles.cardSub}>열심히 운동하세요! 1년동안 화이팅~</Text>
           </View>
         ) : (
           <FlatList

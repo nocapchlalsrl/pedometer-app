@@ -11,7 +11,7 @@ import {
 import { router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { db, auth } from '../lib/firebase';
 import { extractUidFromGoogleUser } from '../lib/utils';
 
 const COLORS = {
@@ -45,7 +45,12 @@ export default function SignupScreen() {
 
       // ✅ roster 컬렉션: 관리자가 학년/반/번호로 학생을 찾기 위한 인덱스
       const raw = await AsyncStorage.getItem('googleUser');
-      const uid = raw ? extractUidFromGoogleUser(raw) : null;
+      const asyncUid = raw ? extractUidFromGoogleUser(raw) : null;
+      const firebaseUid = auth.currentUser?.uid ?? null;
+      const uid = firebaseUid ?? asyncUid;
+
+      console.log('SIGNUP uid check:', { firebaseUid, asyncUid });
+
       if (uid) {
         await setDoc(doc(db, 'roster', rosterId), {
           uid,
@@ -56,6 +61,19 @@ export default function SignupScreen() {
           studentLabel,
           updatedAt: serverTimestamp(),
         }, { merge: true });
+      }
+
+      if (firebaseUid) {
+        await setDoc(doc(db, 'users', firebaseUid), {
+          name,
+          grade,
+          classNo,
+          number,
+          studentLabel,
+          updatedAt: serverTimestamp(),
+        }, { merge: true });
+      } else {
+        console.log('SIGNUP_WARN: Firebase Auth uid 없음, users 저장 스킵');
       }
 
       router.replace('/(tabs)');
@@ -75,7 +93,7 @@ export default function SignupScreen() {
           <Text style={styles.label}>학년</Text>
           <TextInput
             style={styles.input}
-            placeholder="예: 2"
+            placeholder="예: 3"
             placeholderTextColor="#6B7280"
             keyboardType="numeric"
             value={grade}
@@ -85,7 +103,7 @@ export default function SignupScreen() {
           <Text style={styles.label}>반</Text>
           <TextInput
             style={styles.input}
-            placeholder="예: 7"
+            placeholder="예: 2"
             placeholderTextColor="#6B7280"
             keyboardType="numeric"
             value={classNo}
@@ -95,7 +113,7 @@ export default function SignupScreen() {
           <Text style={styles.label}>번호</Text>
           <TextInput
             style={styles.input}
-            placeholder="예: 19"
+            placeholder="예: 1"
             placeholderTextColor="#6B7280"
             keyboardType="numeric"
             value={number}
@@ -105,7 +123,7 @@ export default function SignupScreen() {
           <Text style={styles.label}>이름</Text>
           <TextInput
             style={styles.input}
-            placeholder="예: 홍길동"
+            placeholder="예: 최민기"
             placeholderTextColor="#6B7280"
             value={name}
             onChangeText={setName}

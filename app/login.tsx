@@ -62,7 +62,7 @@ export default function LoginScreen() {
     }
 
     try {
-      const uid = (user as any)?.id || (user as any)?.uid || (user as any)?.sub || email || '-';
+      const uid = auth.currentUser?.uid || (user as any)?.id || (user as any)?.uid || (user as any)?.sub || email || '-';
       const name = user?.name ?? '-';
       await AsyncStorage.setItem('googleUser', JSON.stringify({ uid, email, name }));
     } catch {}

@@ -13,12 +13,14 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { extractUidFromGoogleUser } from '../../lib/utils';
-import { db } from '../../lib/firebase';
+import { db, auth } from '../../lib/firebase';
 import {
   doc,
   onSnapshot,
   collection,
   getDocs,
+  query,
+  where,
   Timestamp,
   deleteDoc,
   writeBatch,
@@ -26,7 +28,6 @@ import {
 import { useFocusEffect } from '@react-navigation/native';
 import { GoogleSignin } from '@react-native-google-signin/google-signin';
 import { signOut as firebaseSignOut } from 'firebase/auth';
-import { auth } from '../../lib/firebase';
 import { router } from 'expo-router';
 
 const COLORS = {
@@ -87,7 +88,7 @@ export default function MyPageTab() {
 
   const studentLabel = useMemo(() => {
     if (!studentInfo) return '';
-    return `${studentInfo.grade}${studentInfo.classNo}${studentInfo.number} ${studentInfo.name}`;
+    return `${studentInfo.grade}${studentInfo.classNo}${String(studentInfo.number).padStart(2, '0')} ${studentInfo.name}`;
   }, [studentInfo]);
 
   // uid / studentInfo 로드
@@ -95,7 +96,8 @@ export default function MyPageTab() {
     const init = async () => {
       const googleUser = await AsyncStorage.getItem('googleUser');
       if (!googleUser) return;
-      const u = extractUidFromGoogleUser(googleUser);
+      const asyncUid = extractUidFromGoogleUser(googleUser);
+      const u = auth.currentUser?.uid ?? asyncUid;
       if (!u) return;
       setUid(u);
 
@@ -195,6 +197,29 @@ export default function MyPageTab() {
               // 유저 문서 삭제
               await deleteDoc(doc(db, 'users', uid));
 
+              // roster 문서 삭제
+              if (studentInfo) {
+                const rosterId = `${studentInfo.grade}${studentInfo.classNo.padStart(2, '0')}${studentInfo.number.padStart(2, '0')}_${studentInfo.name}`;
+                try {
+                  await deleteDoc(doc(db, 'roster', rosterId));
+                } catch (e) {
+                  console.log('ROSTER_DELETE_ERR', e);
+                }
+              } else {
+                console.log('ROSTER_DELETE_SKIP: studentInfo 없음');
+              }
+
+              // ledger 문서 삭제 (uid로 쿼리)
+              try {
+                const ledgerSnap = await getDocs(query(collection(db, 'ledger'), where('uid', '==', uid)));
+                console.log('LEDGER_DELETE: 찾은 문서 수', ledgerSnap.size);
+                const ledgerBatch = writeBatch(db);
+                ledgerSnap.forEach((d) => ledgerBatch.delete(d.ref));
+                await ledgerBatch.commit();
+              } catch (e) {
+                console.log('LEDGER_DELETE_ERR', e);
+              }
+
               // 구글 로그아웃 + 로컬 데이터 삭제
               try { await GoogleSignin.signOut(); } catch {}
               try { await firebaseSignOut(auth); } catch {}
@@ -216,7 +241,7 @@ export default function MyPageTab() {
     <SafeAreaView style={styles.safeArea}>
       <ScrollView contentContainerStyle={styles.container}>
         <Text style={styles.title}>마이페이지</Text>
-        <Text style={styles.subtitle}>내 정보 / 포인트 / 총 걸음수</Text>
+        <Text style={styles.subtitle}>사용자 정보와 걸음수 및 포인트를 알 수 있습니다. </Text>
 
         <View style={styles.card}>
           <Text style={styles.cardTitle}>학생 정보</Text>
@@ -227,7 +252,7 @@ export default function MyPageTab() {
           <View style={[styles.card, { flex: 1, marginRight: 10 }]}>
             <Text style={styles.cardTitle}>포인트</Text>
             <Text style={styles.big}>{points.toLocaleString()} P</Text>
-            <Text style={styles.cardSub}>최근 갱신: {updatedAt ? fmtTS(updatedAt) : '-'}</Text>
+            <Text style={styles.cardSub}>갱신: {updatedAt ? fmtTS(updatedAt) : '-'}</Text>
           </View>
 
           <View style={[styles.card, { flex: 1 }]}>

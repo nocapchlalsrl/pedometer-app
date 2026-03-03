@@ -1,41 +1,41 @@
 {
   "project_info": {
-    "project_number": "662366415318",
-    "project_id": "pedo-a2393",
-    "storage_bucket": "pedo-a2393.firebasestorage.app"
+    "project_number": "455472798685",
+    "project_id": "pedo-c66e6",
+    "storage_bucket": "pedo-c66e6.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:662366415318:android:a827c0dd7a5d61f6b01c77",
+        "mobilesdk_app_id": "1:455472798685:android:b6442ddacc4b4f5fef3434",
         "android_client_info": {
           "package_name": "com.seoma.pedmeter"
         }
       },
       "oauth_client": [
         {
-          "client_id": "662366415318-c02emmf448rl0bm3bp8dln37a4ve2adf.apps.googleusercontent.com",
+          "client_id": "455472798685-p3bjt2q7reldpo468jsj3p494hph8vdk.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
             "package_name": "com.seoma.pedmeter",
-            "certificate_hash": "621b7da62188ba6631a60627f600b7aa1c01fe17"
+            "certificate_hash": "32547a7510135cf0a27597d5c4e490f84ec3f4f5"
           }
         },
         {
-          "client_id": "662366415318-7p9ff58dnk93a9an7a0s9pemn4pa28ij.apps.googleusercontent.com",
+          "client_id": "455472798685-dptue3qqoaeuqbjvs0srds235vc5hs6o.apps.googleusercontent.com",
           "client_type": 3
         }
       ],
       "api_key": [
         {
-          "current_key": "AIzaSyCLUwEa_ttaoq2v4SVKDJFpE5Djq2A7LKc"
+          "current_key": "AIzaSyDjbQxMxssb00tunX-mhqR5Gwf1S71GWY0"
         }
       ],
       "services": {
         "appinvite_service": {
           "other_platform_oauth_client": [
             {
-              "client_id": "662366415318-7p9ff58dnk93a9an7a0s9pemn4pa28ij.apps.googleusercontent.com",
+              "client_id": "455472798685-dptue3qqoaeuqbjvs0srds235vc5hs6o.apps.googleusercontent.com",
               "client_type": 3
             }
           ]

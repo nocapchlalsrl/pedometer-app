@@ -19,9 +19,9 @@ export default function RootLayout() {
   useEffect(() => {
     GoogleSignin.configure({
       webClientId:
-        '662366415318-7p9ff58dnk93a9an7a0s9pemn4pa28ij.apps.googleusercontent.com',
+        '455472798685-dptue3qqoaeuqbjvs0srds235vc5hs6o.apps.googleusercontent.com',
       iosClientId:
-        '662366415318-2fmcnns4gmd9mvfd7nvdmdmcmbf9lcr3.apps.googleusercontent.com',
+        '455472798685-9psh6i0sg7f53u4esab7d2koubm70583.apps.googleusercontent.com',
     });
   }, []);
 

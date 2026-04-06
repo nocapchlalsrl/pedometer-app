@@ -1,20 +1,23 @@
 {
   "expo": {
-    "name": "경북일고 만보기",
+    "name": "만버깅",
     "owner": "seoma",
     "slug": "pedometer",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/images/school-logo.png",
     "scheme": "pedometer",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.seoma.pedmeter",
+      "googleServicesFile": "./GoogleService-Info.plist",
+      "appleTeamId": "4UKF35QPZJ",
+      "config": {
+        "usesNonExemptEncryption": false
+      },
       "infoPlist": {
-        "NSHealthShareUsageDescription": "걸음 수를 측정하여 포인트를 적립하기 위해 건강 데이터 접근이 필요합니다.",
-        "NSHealthUpdateUsageDescription": "앱에서 건강 데이터를 기록하기 위해 필요합니다.",
         "NSMotionUsageDescription": "걸음 수를 측정하기 위해 동작 센서 접근이 필요합니다."
       }
     },
@@ -29,10 +32,9 @@
         "WAKE_LOCK"
       ],
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+        "backgroundColor": "#071427",
+        "foregroundImage": "./assets/images/school-logo.png",
+        "monochromeImage": "./assets/images/school-logo.png"
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false
@@ -46,22 +48,21 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/splash-icon.png",
+          "image": "./assets/images/school-logo.png",
           "imageWidth": 200,
           "resizeMode": "contain",
-          "backgroundColor": "#ffffff",
+          "backgroundColor": "#071427",
           "dark": {
-            "backgroundColor": "#000000"
+            "backgroundColor": "#071427"
           }
         }
       ],
       [
         "@react-native-google-signin/google-signin",
         {
-          "iosUrlScheme": "com.googleusercontent.apps.705515267078-dfqv7mar46juto9ls5mlhceolj5lfatb"
+          "iosUrlScheme": "com.googleusercontent.apps.455472798685-9psh6i0sg7f53u4esab7d2koubm70583"
         }
       ],
-      "expo-health-connect",
       [
         "expo-build-properties",
         {

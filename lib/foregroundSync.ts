@@ -1,4 +1,5 @@
 // lib/foregroundSync.ts
+import { Platform } from 'react-native';
 import BackgroundService from 'react-native-background-actions';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { db } from './firebase';
@@ -163,6 +164,7 @@ const options = {
 };
 
 export async function startForegroundSync() {
+  if (Platform.OS !== 'android') return;
   if (BackgroundService.isRunning()) return;
   // ✅ 라이브러리 내부 expo-keep-awake 실패 포함 모든 에러 삼킴
   try {
@@ -173,10 +175,12 @@ export async function startForegroundSync() {
 }
 
 export async function stopForegroundSync() {
+  if (Platform.OS !== 'android') return;
   if (!BackgroundService.isRunning()) return;
   await BackgroundService.stop();
 }
 
 export async function isForegroundSyncRunning() {
+  if (Platform.OS !== 'android') return false;
   return BackgroundService.isRunning();
 }

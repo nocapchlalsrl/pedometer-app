@@ -4,7 +4,7 @@ import { db } from './firebase';
 import { doc, getDoc, Timestamp } from 'firebase/firestore';
 
 export type ExperimentWeek = 0 | 1 | 2 | 3;
-// 0 = 실험 미진행, 1 = 1주차(보상O), 2 = 2주차(보상X), 3 = 3주차(포인트삭제)
+// 0 = 실험 미진행, 1 = 1주차(보상X), 2 = 2주차(보상O), 3 = 3주차(보상X)
 
 /**
  * Firestore experiments/config 문서에서 현재 주차를 계산.

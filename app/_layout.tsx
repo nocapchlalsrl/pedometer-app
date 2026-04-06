@@ -1,10 +1,12 @@
 // app/_layout.tsx
 import React, { useEffect, useState } from 'react';
-import { Stack } from 'expo-router';
+import { Stack, router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { GoogleSignin } from '@react-native-google-signin/google-signin';
-import { LogBox } from 'react-native';
+import { LogBox, Platform } from 'react-native';
 import 'react-native-reanimated';
+// iOS HealthKit 백그라운드 동기화 task 등록 (defineTask도 이 import로 실행됨)
+import { registerBackgroundSync } from '../lib/backgroundTask';
 
 LogBox.ignoreLogs(['unable to activate keep awake', 'Unable to activate keep awake']);
 
@@ -15,6 +17,13 @@ export const unstable_settings = {
 
 export default function RootLayout() {
   const [bootChecked, setBootChecked] = useState(false);
+  const [autoLogin, setAutoLogin] = useState(false);
+
+  useEffect(() => {
+    if (Platform.OS === 'ios') {
+      registerBackgroundSync().catch(() => {});
+    }
+  }, []);
 
   useEffect(() => {
     GoogleSignin.configure({
@@ -29,10 +38,11 @@ export default function RootLayout() {
     let alive = true;
     const boot = async () => {
       try {
-        await AsyncStorage.getItem('googleUser');
-        await AsyncStorage.getItem('studentInfo');
-
-
+        const googleUser = await AsyncStorage.getItem('googleUser');
+        const studentInfo = await AsyncStorage.getItem('studentInfo');
+        if (alive && googleUser && studentInfo) {
+          setAutoLogin(true);
+        }
       } catch (e) {
         console.log('BOOT_ERR', e);
       } finally {
@@ -42,6 +52,12 @@ export default function RootLayout() {
     boot();
     return () => { alive = false; };
   }, []);
+
+  useEffect(() => {
+    if (bootChecked && autoLogin) {
+      router.replace('/(tabs)');
+    }
+  }, [bootChecked, autoLogin]);
 
   if (!bootChecked) return null;
 

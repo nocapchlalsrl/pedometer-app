@@ -349,4 +349,5 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   deleteText: { color: COLORS.DANGER, fontSize: 13, fontWeight: '700' },
+  healthKitNote: { color: COLORS.SUB, fontSize: 11, marginTop: 6 },
 });

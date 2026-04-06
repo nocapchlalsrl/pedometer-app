@@ -20,7 +20,7 @@ import * as Linking from 'expo-linking';
 import { useFocusEffect } from '@react-navigation/native';
 
 // ✅ Firebase
-import { db } from '../lib/firebase';
+import { db, auth } from '../lib/firebase';
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 
 // ✅ 공통 유틸
@@ -124,13 +124,57 @@ export default function MainScreen() {
 
   const lastCloudWriteAtRef = useRef<number>(0);
 
+  // ✅ 걸음수 부드러운 애니메이션 refs
+  const displayRef = useRef<number>(0);          // 현재 화면에 표시 중인 걸음수
+  const animTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const syncIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   // ✅ stale closure 방지: studentInfo를 ref로도 관리
   const studentInfoRef = useRef<StudentInfo | null>(null);
 
+  // ✅ 세션 slack: HealthKit이 Firebase보다 앞선 걸음 (앱 실행 전 걸음 제외용)
+  // 신규 유저가 앱 처음 켤 때 오늘 쌓인 걸음이 한번에 추가되는 것 방지
+  const sessionSlackRef = useRef<number>(-1);
+
   // ✅ 포인트 규칙
   const POINT_UNIT_STEPS = 100;
-  const MAX_DAILY_STEPS = 10_000; // 하루 최대 걸음 (= 최대 100P)
+  const MAX_DAILY_STEPS = 10_000;
   const stepsToPoints = (steps: number) => Math.floor(steps / POINT_UNIT_STEPS);
+
+  // ✅ 초기화/리셋 시 즉시 표시 (애니메이션 없이)
+  const snapStepCount = (v: number) => {
+    if (animTimerRef.current) {
+      clearTimeout(animTimerRef.current);
+      animTimerRef.current = null;
+    }
+    displayRef.current = v;
+    setStepCount(v);
+  };
+
+  // ✅ 걸음수 1씩 올라가는 애니메이션 (CashWalk-like)
+  // 차이에 따라 속도 자동 조절: 항상 ~1.5초 안에 완료
+  // 5걸음 차이 → 300ms/걸음(느림), 100걸음 → 15ms/걸음(빠름), 1000걸음 → 10ms(최소)
+  const animateStepCount = (target: number) => {
+    if (animTimerRef.current) {
+      clearTimeout(animTimerRef.current);
+      animTimerRef.current = null;
+    }
+    const diff = target - displayRef.current;
+    if (diff <= 0) return;
+
+    // 전체 애니메이션이 약 1.5초 걸리도록 간격 계산, 최소 10ms 최대 300ms
+    const interval = Math.min(300, Math.max(10, Math.floor(1500 / diff)));
+
+    const tick = () => {
+      if (displayRef.current >= target) return;
+      displayRef.current += 1;
+      setStepCount(displayRef.current);
+      if (displayRef.current < target) {
+        animTimerRef.current = setTimeout(tick, interval);
+      }
+    };
+    animTimerRef.current = setTimeout(tick, interval);
+  };
 
   // ===== Firebase refs =====
   const userDocRef = (uid: string) => doc(db, 'users', uid);
@@ -167,7 +211,7 @@ export default function MainScreen() {
         await AsyncStorage.setItem(STORAGE_KEYS.stepsDate, today);
         await AsyncStorage.setItem(STORAGE_KEYS.stepsValue, '0');
         baseStepsRef.current = 0;
-        setStepCount(0);
+        snapStepCount(0);
         pendingStepsRef.current = 0;
         return;
       }
@@ -175,8 +219,7 @@ export default function MainScreen() {
       const v = Number(savedValue ?? '0');
       const safe = Number.isFinite(v) && v >= 0 ? v : 0;
       baseStepsRef.current = safe;
-      setStepCount(safe);
-      // ✅ 로컬 캐시 기준으로 pendingSteps 복원
+      snapStepCount(safe);
       pendingStepsRef.current = safe % POINT_UNIT_STEPS;
     } catch (e) {
       console.log('LOAD_STEPS_ERR', e);
@@ -208,7 +251,7 @@ export default function MainScreen() {
     const date = ymd(new Date());
     const steps = baseStepsRef.current;
     const points = pointsRef.current;
-    const info = studentInfoRef.current; // ✅ ref 사용 (stale closure 방지)
+    const info = studentInfoRef.current;
 
     try {
       await setDoc(
@@ -229,8 +272,6 @@ export default function MainScreen() {
         { merge: true }
       );
 
-      // ✅ steps > 0 일 때만 저장: 세션 시작 직후 baseStepsRef=0 상태에서
-      // Firebase를 덮어쓰는 것을 방지 (탭 전환 시 0으로 덮어써지는 버그 수정)
       if (steps > 0) {
         await setDoc(
           dailyStepsDocRef(uid, date),
@@ -264,8 +305,7 @@ export default function MainScreen() {
         const s = Number(data?.steps ?? 0);
         const safe = Number.isFinite(s) && s >= 0 ? s : 0;
         baseStepsRef.current = safe;
-        setStepCount(safe);
-        // ✅ 로드된 걸음 기준으로 pendingSteps 복원 (다음 포인트까지 남은 걸음 수)
+        snapStepCount(safe);
         pendingStepsRef.current = safe % POINT_UNIT_STEPS;
         await AsyncStorage.setItem(STORAGE_KEYS.stepsDate, date);
         await AsyncStorage.setItem(STORAGE_KEYS.stepsValue, String(safe));
@@ -280,17 +320,28 @@ export default function MainScreen() {
     try {
       const abs = await getTodayStepsAbsolute();
       if (!Number.isFinite(abs) || abs < 0) return;
-      if (baseStepsRef.current >= MAX_DAILY_STEPS) return; // ✅ 일일 최대 도달
+      if (baseStepsRef.current >= MAX_DAILY_STEPS) return;
 
-      const diff = abs - baseStepsRef.current;
+      // ✅ 세션 첫 호출: HealthKit이 Firebase보다 앞선 걸음수를 slack으로 기록
+      // 신규 유저가 앱 실행 전에 쌓은 걸음이 한번에 추가되는 것 방지
+      if (sessionSlackRef.current < 0) {
+        sessionSlackRef.current = Math.max(0, abs - baseStepsRef.current);
+        // 백그라운드 Task가 동일 slack을 참조할 수 있도록 AsyncStorage에 저장
+        const date = ymd(new Date());
+        AsyncStorage.setItem(`hk_slack_${date}`, String(sessionSlackRef.current)).catch(() => {});
+      }
+
+      // slack 제거 후 실제 앱이 카운트해야 할 HealthKit 값
+      const effectiveAbs = Math.max(baseStepsRef.current, abs - sessionSlackRef.current);
+      const diff = effectiveAbs - baseStepsRef.current;
       if (diff <= 0) return;
 
       const available = MAX_DAILY_STEPS - baseStepsRef.current;
-      const safeDiff = Math.min(diff > 5000 ? 5000 : diff, available); // ✅ 초과분 잘라내기
+      const safeDiff = Math.min(diff > 5000 ? 5000 : diff, available);
 
       const newSteps = baseStepsRef.current + safeDiff;
       baseStepsRef.current = newSteps;
-      setStepCount(newSteps);
+      animateStepCount(newSteps);
       saveTodaySteps(newSteps).catch(() => {});
 
       pendingStepsRef.current += safeDiff;
@@ -298,7 +349,6 @@ export default function MainScreen() {
       if (addP > 0) {
         pendingStepsRef.current -= addP * POINT_UNIT_STEPS;
 
-        // ✅ 실험: 포인트 지급 가능 여부 확인
         if (canEarnPoints(inExperimentRef.current, experimentWeekRef.current)) {
           setCurrentPoints((prev) => {
             const next = prev + addP;
@@ -337,14 +387,14 @@ export default function MainScreen() {
 
         if (delta <= 0) return;
         if (delta > 50) return;
-        if (baseStepsRef.current >= MAX_DAILY_STEPS) return; // ✅ 일일 최대 도달
+        if (baseStepsRef.current >= MAX_DAILY_STEPS) return;
 
         const available = MAX_DAILY_STEPS - baseStepsRef.current;
-        const actualDelta = Math.min(delta, available); // ✅ 초과분 잘라내기
+        const actualDelta = Math.min(delta, available);
 
         const newSteps = baseStepsRef.current + actualDelta;
         baseStepsRef.current = newSteps;
-        setStepCount(newSteps);
+        animateStepCount(newSteps);
         saveTodaySteps(newSteps).catch(() => {});
 
         pendingStepsRef.current += actualDelta;
@@ -352,7 +402,6 @@ export default function MainScreen() {
         if (addP > 0) {
           pendingStepsRef.current -= addP * POINT_UNIT_STEPS;
 
-          // ✅ 실험: 포인트 지급 가능 여부 확인
           if (canEarnPoints(inExperimentRef.current, experimentWeekRef.current)) {
             setCurrentPoints((prev) => {
               const next = prev + addP;
@@ -374,7 +423,7 @@ export default function MainScreen() {
   useFocusEffect(
     useCallback(() => {
       return () => {
-        lastCloudWriteAtRef.current = 0; // throttle 우회
+        lastCloudWriteAtRef.current = 0;
         flushToCloud().catch(() => {});
       };
     }, [])
@@ -387,13 +436,14 @@ export default function MainScreen() {
 
       const guard = async () => {
         const googleUser = await AsyncStorage.getItem('googleUser');
-        if (!googleUser) {
+        const firebaseUid = auth.currentUser?.uid ?? null;
+        if (!googleUser && !firebaseUid) {
           if (!alive) return;
           router.replace('/login');
           return;
         }
 
-        const uid = extractUidFromGoogleUser(googleUser);
+        const uid = firebaseUid ?? extractUidFromGoogleUser(googleUser ?? '');
         if (!uid) {
           if (!alive) return;
           router.replace('/login');
@@ -412,7 +462,7 @@ export default function MainScreen() {
           const info = JSON.parse(student) as StudentInfo;
           if (!alive) return;
           setStudentInfo(info);
-          studentInfoRef.current = info; // ✅ ref 동기화 (flushToCloud stale closure 방지)
+          studentInfoRef.current = info;
           await loadFromCloud(uid);
         } catch {
           if (!alive) return;
@@ -452,7 +502,7 @@ export default function MainScreen() {
       try {
         const saved = await AsyncStorage.getItem(STORAGE_KEYS.bgConsent);
         if (!mounted) return;
-        if (saved !== null) return; // 이미 답변함 → init에서 처리됨
+        if (saved !== null) return;
 
         Alert.alert(
           '백그라운드 걸음 동기화',
@@ -472,7 +522,6 @@ export default function MainScreen() {
               onPress: async () => {
                 try {
                   await AsyncStorage.setItem(STORAGE_KEYS.bgConsent, 'granted');
-                  // ✅ 동의 후 서비스 시작 (애니메이션 완료 후 시작으로 keep awake 에러 방지)
                   if (Platform.OS === 'android') {
                     InteractionManager.runAfterInteractions(() => {
                       setTimeout(() => { startForegroundSync(); }, 500);
@@ -505,7 +554,6 @@ export default function MainScreen() {
         if (!mounted) return;
         if (saved !== null) return;
 
-        // bgConsent 팝업과 겹치지 않도록 1초 지연
         await new Promise<void>(res => setTimeout(res, 1000));
         if (!mounted) return;
 
@@ -542,13 +590,9 @@ export default function MainScreen() {
       await loadTodaySteps();
       await loadLocalPoints();
 
-      // ✅ 재로그인/앱 데이터 초기화 후 Firebase에서 최신값 복구
-      // guard(useFocusEffect)와 동시에 실행되면 race condition 발생 가능하므로
-      // init 안에서 먼저 Firebase를 읽어 pedometer 시작 전에 올바른 값을 확보
       const googleRaw = await AsyncStorage.getItem('googleUser');
       const initUid = googleRaw ? extractUidFromGoogleUser(googleRaw) : null;
       if (initUid) {
-        // ✅ 실험 주차/참여 여부 로드 (loadFromCloud 전에 ref 세팅해야 3주차 리셋 작동)
         const [expStatus, isInExp] = await Promise.all([
           getExperimentWeek(),
           getInExperiment(initUid),
@@ -559,7 +603,7 @@ export default function MainScreen() {
         inExperimentRef.current = isInExp;
 
         await loadFromCloud(initUid);
-        uidRef.current = initUid; // ✅ pedometer 시작 전에 uid 확보 (flushToCloud가 null 아닌 uid 사용)
+        uidRef.current = initUid;
       }
       if (!mounted) return;
 
@@ -598,8 +642,14 @@ export default function MainScreen() {
         await syncAbsoluteTodaySteps();
         await startWatch();
 
-        // ✅ Android: 이전에 동의한 경우에만 포그라운드 서비스 시작
-        // InteractionManager로 애니메이션이 완전히 끝난 후 시작 (keep awake 에러 방지)
+        // ✅ 3초마다 HealthKit 절대값 재동기화 (포그라운드 실시간성 향상)
+        if (syncIntervalRef.current) clearInterval(syncIntervalRef.current);
+        syncIntervalRef.current = setInterval(() => {
+          if (appStateRef.current === 'active') {
+            syncAbsoluteTodaySteps().catch(() => {});
+          }
+        }, 3000);
+
         if (Platform.OS === 'android') {
           const consent = await AsyncStorage.getItem(STORAGE_KEYS.bgConsent);
           if (consent === 'granted') {
@@ -626,8 +676,19 @@ export default function MainScreen() {
         await loadTodaySteps();
         await loadLocalPoints();
         if (uidRef.current) await loadFromCloud(uidRef.current);
+        // ✅ 백그라운드 복귀 시 slack 리셋 (Firebase 최신값 기준으로 재계산)
+        // AsyncStorage slack key도 삭제 → 다음 syncAbsoluteTodaySteps에서 재계산 후 재저장
+        sessionSlackRef.current = -1;
+        AsyncStorage.removeItem(`hk_slack_${ymd(new Date())}`).catch(() => {});
         await syncAbsoluteTodaySteps();
         if (isAvailableRef.current) await startWatch();
+        // 3초 주기 동기화 재시작
+        if (syncIntervalRef.current) clearInterval(syncIntervalRef.current);
+        syncIntervalRef.current = setInterval(() => {
+          if (appStateRef.current === 'active') {
+            syncAbsoluteTodaySteps().catch(() => {});
+          }
+        }, 3000);
       }
 
       if (prev === 'active' && nextState.match(/inactive|background/)) {
@@ -641,7 +702,14 @@ export default function MainScreen() {
         subAppState.remove();
       } catch {}
       stopWatch();
-      // ✅ Android: 앱 종료 시 포그라운드 서비스 중지
+      if (animTimerRef.current) {
+        clearTimeout(animTimerRef.current);
+        animTimerRef.current = null;
+      }
+      if (syncIntervalRef.current) {
+        clearInterval(syncIntervalRef.current);
+        syncIntervalRef.current = null;
+      }
       if (Platform.OS === 'android') {
         stopForegroundSync().catch(() => {});
       }
@@ -713,6 +781,9 @@ export default function MainScreen() {
                 ? '오늘 목표를 달성했습니다! (최대 100P 획득)'
                 : `남은 획득 가능 포인트: ${100 - Math.floor(stepCount / POINT_UNIT_STEPS)}P\n앱을 다시 열면 누락분을 자동 동기화합니다.`}
             </Text>
+            {Platform.OS === 'android' && (
+              <Text style={styles.healthKitNote}>걸음 수 데이터: Health Connect</Text>
+            )}
           </View>
         </View>
 
@@ -779,4 +850,5 @@ const styles = StyleSheet.create({
   digits: { fontSize: 52, fontWeight: 'bold', color: COLORS.DARK_BG },
   stepUnit: { color: COLORS.TEXT_GRAY, fontSize: 16, marginTop: 8 },
   smallInfo: { marginTop: 10, color: COLORS.TEXT_GRAY, fontSize: 11, textAlign: 'center' },
+  healthKitNote: { marginTop: 8, color: '#9CA3AF', fontSize: 13, textAlign: 'center', fontWeight: '500' },
 });

@@ -87,13 +87,13 @@ export default function ShopScreen() {
         if (Number.isFinite(local) && local >= 0) setPoints(local);
       } catch {}
 
-      // 서버 1회 보정 (로컬보다 높을 때만 반영, AsyncStorage는 덮어쓰지 않음)
+      // 서버 포인트로 보정
       try {
         const snap = await getDoc(userRef(u));
         if (snap.exists()) {
           const p = Number((snap.data() as any)?.points ?? 0);
           const safe = Number.isFinite(p) && p >= 0 ? p : 0;
-          setPoints((prev) => Math.max(prev, safe));
+          setPoints(safe);
         }
       } catch {}
     };
@@ -110,8 +110,7 @@ export default function ShopScreen() {
         if (!snap.exists()) return;
         const p = Number((snap.data() as any)?.points ?? 0);
         const safe = Number.isFinite(p) && p >= 0 ? p : 0;
-        // ✅ Firebase가 로컬보다 낮으면(미동기화) 무시 → 포인트 튀는 현상 방지
-        setPoints((prev) => Math.max(prev, safe));
+        setPoints(safe);
       },
       (err) => console.log('POINTS_SUB_ERR', err)
     );

@@ -1,10 +1,6 @@
 // lib/healthSteps.android.ts
-import {
-  initialize,
-  getSdkStatus,
-  requestPermission,
-  readRecords,
-} from 'react-native-health-connect';
+// expo-sensors Pedometer 사용 (iOS CoreMotion과 동일 방식)
+import { Pedometer } from 'expo-sensors';
 
 function startOfDay(date = new Date()) {
   const d = new Date(date);
@@ -16,29 +12,11 @@ export async function getTodayStepsAbsolute(): Promise<number> {
   const now = new Date();
   const start = startOfDay(now);
   try {
-    const status = await getSdkStatus();
-    if (status !== 3) return 0;
-
-    await initialize();
-
-    await requestPermission([
-      { accessType: 'read', recordType: 'Steps' },
-    ]);
-
-    const res = await readRecords('Steps', {
-      timeRangeFilter: {
-        operator: 'between',
-        startTime: start.toISOString(),
-        endTime: now.toISOString(),
-      },
-    });
-
-    const total = (res.records ?? []).reduce((sum: number, r: any) => {
-      const c = Number(r?.count ?? 0);
-      return sum + (Number.isFinite(c) ? c : 0);
-    }, 0);
-
-    return total > 0 ? total : 0;
+    const { status } = await Pedometer.requestPermissionsAsync();
+    if (status !== 'granted') return 0;
+    const res = await Pedometer.getStepCountAsync(start, now);
+    const abs = Number(res?.steps ?? 0);
+    return Number.isFinite(abs) && abs > 0 ? abs : 0;
   } catch (e) {
     console.log('ANDROID_ABS_STEPS_ERR', e);
     return 0;

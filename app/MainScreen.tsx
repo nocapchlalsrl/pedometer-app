@@ -8,7 +8,6 @@ import {
   Alert,
   AppState,
   AppStateStatus,
-  InteractionManager,
   Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -38,8 +37,6 @@ import {
 // ✅ 플랫폼별 절대 걸음수 (Android: Health Connect, iOS: Pedometer)
 import { getTodayStepsAbsolute } from '../lib/healthSteps';
 
-// ✅ Android 포그라운드 서비스
-import { startForegroundSync, stopForegroundSync } from '../lib/foregroundSync';
 
 const COLORS = {
   NAVY: '#0F172A',
@@ -56,8 +53,6 @@ const STORAGE_KEYS = {
   stepsDate: 'steps_today_date',
   stepsValue: 'steps_today_value',
   pointsValue: 'points_value',
-  bgConsent: 'bg_consent',
-  watchGuide: 'watch_guide_shown',
 };
 
 type StudentInfo = {
@@ -66,12 +61,6 @@ type StudentInfo = {
   number: string;
   name: string;
 };
-
-function startOfDay(date = new Date()) {
-  const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
 
 async function openAppSettings() {
   try {
@@ -213,6 +202,9 @@ export default function MainScreen() {
         baseStepsRef.current = 0;
         snapStepCount(0);
         pendingStepsRef.current = 0;
+        // 새 날: slack = 0 (오늘 HealthKit 걸음 전부 반영)
+        // slack을 -1로 두면 abs - 0 = abs 전부 slack이 되어 걸음이 추가 안 됨
+        sessionSlackRef.current = 0;
         return;
       }
 
@@ -377,16 +369,24 @@ export default function MainScreen() {
 
   const startWatch = async () => {
     stopWatch();
-    lastWatchStepsRef.current = 0;
+    lastWatchStepsRef.current = -1; // -1 = 아직 첫 값 미수신
 
     try {
       subRef.current = Pedometer.watchStepCount((result) => {
         const current = result?.steps ?? 0;
+
+        // 첫 콜백: 기준점만 설정하고 증분 적용 안 함 (초기 큰 delta 방지)
+        if (lastWatchStepsRef.current < 0) {
+          lastWatchStepsRef.current = current;
+          return;
+        }
+
         const delta = current - lastWatchStepsRef.current;
         lastWatchStepsRef.current = current;
 
         if (delta <= 0) return;
-        if (delta > 50) return;
+        // delta > 50 필터 제거: Android는 배치로 60~100걸음씩 전달할 수 있음
+        // 3초마다 syncAbsoluteTodaySteps가 절대값으로 보정하므로 과도한 증분은 자동 수정됨
         if (baseStepsRef.current >= MAX_DAILY_STEPS) return;
 
         const available = MAX_DAILY_STEPS - baseStepsRef.current;
@@ -435,20 +435,26 @@ export default function MainScreen() {
       let alive = true;
 
       const guard = async () => {
-        const googleUser = await AsyncStorage.getItem('googleUser');
+        // Firebase Auth 세션 복원 완료까지 대기 (앱 재시작 시 null 타이밍 방지)
+        await auth.authStateReady();
+
         const firebaseUid = auth.currentUser?.uid ?? null;
-        if (!googleUser && !firebaseUid) {
+
+        // Firebase UID가 없으면 → googleUser AsyncStorage로 최후 확인
+        if (!firebaseUid) {
+          const googleUser = await AsyncStorage.getItem('googleUser');
+          if (!googleUser) {
+            if (!alive) return;
+            router.replace('/login');
+            return;
+          }
+          // googleUser는 있지만 Firebase 세션이 없음 → 재로그인 필요
           if (!alive) return;
           router.replace('/login');
           return;
         }
 
-        const uid = firebaseUid ?? extractUidFromGoogleUser(googleUser ?? '');
-        if (!uid) {
-          if (!alive) return;
-          router.replace('/login');
-          return;
-        }
+        const uid = firebaseUid;
         uidRef.current = uid;
 
         const student = await AsyncStorage.getItem('studentInfo');
@@ -494,93 +500,7 @@ export default function MainScreen() {
     fetchWeather();
   }, []);
 
-  // ✅ 최초 1회 백그라운드 동기화 동의 팝업 (Android만 서비스 시작)
-  useEffect(() => {
-    let mounted = true;
 
-    const showBgConsentOnce = async () => {
-      try {
-        const saved = await AsyncStorage.getItem(STORAGE_KEYS.bgConsent);
-        if (!mounted) return;
-        if (saved !== null) return;
-
-        Alert.alert(
-          '백그라운드 걸음 동기화',
-          '화면이 꺼지거나 앱이 백그라운드 상태일 때도\n걸음 수를 실시간으로 동기화합니다.\n\n허용하면 상태바에 만보기 알림이 상주합니다.\n(알림을 눌러 앱으로 돌아올 수 있습니다)\n\n허용하시겠습니까?',
-          [
-            {
-              text: '거부',
-              style: 'cancel',
-              onPress: async () => {
-                try {
-                  await AsyncStorage.setItem(STORAGE_KEYS.bgConsent, 'denied');
-                } catch {}
-              },
-            },
-            {
-              text: '허용',
-              onPress: async () => {
-                try {
-                  await AsyncStorage.setItem(STORAGE_KEYS.bgConsent, 'granted');
-                  if (Platform.OS === 'android') {
-                    InteractionManager.runAfterInteractions(() => {
-                      setTimeout(() => { startForegroundSync(); }, 500);
-                    });
-                  }
-                } catch {}
-              },
-            },
-          ]
-        );
-      } catch (e) {
-        console.log('BG_CONSENT_ERR', e);
-      }
-    };
-
-    showBgConsentOnce();
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
-  // ✅ 최초 1회 갤럭시 워치 연동 안내 팝업 (Android만)
-  useEffect(() => {
-    if (Platform.OS !== 'android') return;
-    let mounted = true;
-
-    const showWatchGuideOnce = async () => {
-      try {
-        const saved = await AsyncStorage.getItem(STORAGE_KEYS.watchGuide);
-        if (!mounted) return;
-        if (saved !== null) return;
-
-        await new Promise<void>(res => setTimeout(res, 1000));
-        if (!mounted) return;
-
-        Alert.alert(
-          '갤럭시 워치 연동 안내',
-          '갤럭시 워치를 사용 중이라면,\nSamsung Health 앱에서\nHealth Connect 연동을 켜주세요.\n\n워치에서 측정한 걸음 수가\n자동으로 반영됩니다.\n\nSamsung Health → 설정 →\nHealth Connect 연결',
-          [
-            {
-              text: '확인했어요',
-              onPress: async () => {
-                try {
-                  await AsyncStorage.setItem(STORAGE_KEYS.watchGuide, 'shown');
-                } catch {}
-              },
-            },
-          ]
-        );
-      } catch (e) {
-        console.log('WATCH_GUIDE_ERR', e);
-      }
-    };
-
-    showWatchGuideOnce();
-    return () => {
-      mounted = false;
-    };
-  }, []);
 
   // ===== init =====
   useEffect(() => {
@@ -650,14 +570,6 @@ export default function MainScreen() {
           }
         }, 3000);
 
-        if (Platform.OS === 'android') {
-          const consent = await AsyncStorage.getItem(STORAGE_KEYS.bgConsent);
-          if (consent === 'granted') {
-            InteractionManager.runAfterInteractions(() => {
-              setTimeout(() => { startForegroundSync(); }, 500);
-            });
-          }
-        }
       } catch (e) {
         console.log('PEDO_INIT_ERR', e);
         if (!mounted) return;
@@ -692,6 +604,7 @@ export default function MainScreen() {
       }
 
       if (prev === 'active' && nextState.match(/inactive|background/)) {
+        lastCloudWriteAtRef.current = 0; // throttle 무시하고 강제 저장
         await flushToCloud();
       }
     });
@@ -709,9 +622,6 @@ export default function MainScreen() {
       if (syncIntervalRef.current) {
         clearInterval(syncIntervalRef.current);
         syncIntervalRef.current = null;
-      }
-      if (Platform.OS === 'android') {
-        stopForegroundSync().catch(() => {});
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

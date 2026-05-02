@@ -117,7 +117,7 @@ const task = async (taskDataArguments: any) => {
       const diff = abs - localSteps;
       if (diff > 0) {
         const available = MAX_DAILY_STEPS - localSteps;
-        const safeDiff = Math.min(diff > 8000 ? 8000 : diff, available); // ✅ 초과분 잘라내기
+        const safeDiff = Math.min(diff > 5000 ? 5000 : diff, available); // ✅ 초과분 잘라내기 (MainScreen과 동일 기준)
         const nextSteps = localSteps + safeDiff;
         await writeLocalNumber(STORAGE_KEYS.stepsValue, nextSteps);
 

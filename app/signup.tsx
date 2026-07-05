@@ -52,6 +52,7 @@ export default function SignupScreen() {
       console.log('SIGNUP uid check:', { firebaseUid, asyncUid });
 
       if (uid) {
+        await AsyncStorage.setItem('currentUid', uid);
         await setDoc(doc(db, 'roster', rosterId), {
           uid,
           name,

@@ -90,62 +90,64 @@ async function flushToCloud(uid: string, steps: number, points: number) {
 // ✅ 서비스 루프: 10~30초 간격으로 절대값 읽어서 보정
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// ✅ 서비스 태스크: 실시간 센서 감시 모드
 const task = async (taskDataArguments: any) => {
   const { intervalMs } = taskDataArguments;
+  let subscription: any = null;
 
-  while (BackgroundService.isRunning()) {
-    try {
-      const uid = await getUid();
-      if (!uid) {
-        await sleep(intervalMs);
-        continue;
-      }
+  try {
+    const uid = await getUid();
+    if (!uid) return;
 
-      await ensureTodayReset();
+    await ensureTodayReset();
 
-      const abs = await getTodayStepsAbsolute();
-      if (!Number.isFinite(abs) || abs < 0) {
-        await sleep(intervalMs);
-        continue;
-      }
+    let lastStepsRead = 0;
+
+    // ✅ Pedometer 실시간 감시 시작
+    subscription = Pedometer.watchStepCount(async (result) => {
+      const current = result.steps;
+      const delta = current - lastStepsRead;
+      lastStepsRead = current;
+
+      if (delta <= 0) return;
 
       const localSteps = await readLocalNumber(STORAGE_KEYS.stepsValue);
-      if (localSteps >= MAX_DAILY_STEPS) { // ✅ 일일 최대 도달
-        await sleep(intervalMs);
-        continue;
-      }
-      const diff = abs - localSteps;
-      if (diff > 0) {
-        const available = MAX_DAILY_STEPS - localSteps;
-        const safeDiff = Math.min(diff > 5000 ? 5000 : diff, available); // ✅ 초과분 잘라내기 (MainScreen과 동일 기준)
-        const nextSteps = localSteps + safeDiff;
-        await writeLocalNumber(STORAGE_KEYS.stepsValue, nextSteps);
+      if (localSteps >= MAX_DAILY_STEPS) return;
 
-        // ✅ 포인트는 "이전 걸음 → 새 걸음의 증가분"만 더함
-        // stepsToPoints(totalSteps)를 prevPoints와 비교하면 구매로 줄어든
-        // 포인트를 복구해버리는 버그 발생 → 증가분(earnedIncrement)만 반영
-        const prevPoints = await readLocalNumber(STORAGE_KEYS.pointsValue);
-        const earnedIncrement = stepsToPoints(nextSteps) - stepsToPoints(localSteps);
-        const nextPoints = earnedIncrement > 0 ? prevPoints + earnedIncrement : prevPoints;
+      const available = MAX_DAILY_STEPS - localSteps;
+      const safeDiff = Math.min(delta, available);
+      const nextSteps = localSteps + safeDiff;
 
-        if (nextPoints !== prevPoints) {
-          await writeLocalNumber(STORAGE_KEYS.pointsValue, nextPoints);
-        }
+      await writeLocalNumber(STORAGE_KEYS.stepsValue, nextSteps);
 
-        await flushToCloud(uid, nextSteps, nextPoints);
+      // 포인트 계산
+      const prevPoints = await readLocalNumber(STORAGE_KEYS.pointsValue);
+      const earnedIncrement = stepsToPoints(nextSteps) - stepsToPoints(localSteps);
+      const nextPoints = earnedIncrement > 0 ? prevPoints + earnedIncrement : prevPoints;
+
+      if (nextPoints !== prevPoints) {
+        await writeLocalNumber(STORAGE_KEYS.pointsValue, nextPoints);
       }
 
-      // ✅ 알림은 매 루프마다 Firebase에 저장된 값(localSteps 기준) 표시
-      const displaySteps = await readLocalNumber(STORAGE_KEYS.stepsValue);
+      // 알림 업데이트 및 클라우드 동기화
       await BackgroundService.updateNotification({
-        taskTitle: '걸음수 저장중',
-        taskDesc: `현재 ${displaySteps.toLocaleString()}걸음`,
+        taskTitle: '걸음수 측정 중 (실시간)',
+        taskDesc: `현재 ${nextSteps.toLocaleString()}걸음 (${nextPoints}P)`,
       });
-    } catch (e) {
-      console.log('FG_SERVICE_LOOP_ERR', e);
-    }
 
-    await sleep(intervalMs);
+      await flushToCloud(uid, nextSteps, nextPoints);
+    });
+
+    // 서비스 유지 (구독이 살아있는 동안 무한 대기)
+    while (BackgroundService.isRunning()) {
+      await sleep(intervalMs);
+      // 날짜가 바뀌었는지 체크
+      await ensureTodayReset();
+    }
+  } catch (e) {
+    console.log('FG_SERVICE_ERR', e);
+  } finally {
+    if (subscription) subscription.remove();
   }
 };
 

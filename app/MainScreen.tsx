@@ -368,6 +368,18 @@ export default function MainScreen() {
   };
 
   const startWatch = async () => {
+    // ✅ Android: 포그라운드 서비스가 실행 중이면 직접 감시(watch)를 중단하여 중복 카운팅 방지
+    // 서비스가 AsyncStorage를 업데이트하면 3초 주기의 syncAbsoluteTodaySteps가 UI를 갱신함
+    if (Platform.OS === 'android') {
+      const { isForegroundSyncRunning } = require('../lib/foregroundSync');
+      const running = await isForegroundSyncRunning();
+      if (running) {
+        console.log('[Main] Foreground Service is running, skipping local watch.');
+        stopWatch();
+        return;
+      }
+    }
+
     stopWatch();
     lastWatchStepsRef.current = -1; // -1 = 아직 첫 값 미수신
 
@@ -440,22 +452,34 @@ export default function MainScreen() {
 
         const firebaseUid = auth.currentUser?.uid ?? null;
 
-        // Firebase UID가 없으면 → googleUser AsyncStorage로 최후 확인
+        // Firebase UID가 없으면 -> googleUser AsyncStorage로 최후 확인
         if (!firebaseUid) {
           const googleUser = await AsyncStorage.getItem('googleUser');
           if (!googleUser) {
+            // 진짜 아무 정보도 없을 때만 로그인으로 보냄
             if (!alive) return;
             router.replace('/login');
             return;
           }
-          // googleUser는 있지만 Firebase 세션이 없음 → 재로그인 필요
-          if (!alive) return;
-          router.replace('/login');
-          return;
+          
+          // googleUser는 있는데 Firebase 세션이 아직 안 올라온 경우
+          // 절대 로그인 페이지로 보내지 않고, 로컬 UID로 최대한 버팀
+          const localUid = extractUidFromGoogleUser(googleUser);
+          if (localUid) {
+            uidRef.current = localUid;
+            // currentUid 자가 치유
+            AsyncStorage.getItem('currentUid').then(stored => {
+              if (!stored) AsyncStorage.setItem('currentUid', localUid);
+            });
+          } else {
+            // 파싱 실패 시에만 로그인으로
+            if (!alive) return;
+            router.replace('/login');
+            return;
+          }
+        } else {
+          uidRef.current = firebaseUid;
         }
-
-        const uid = firebaseUid;
-        uidRef.current = uid;
 
         const student = await AsyncStorage.getItem('studentInfo');
         if (!student) {
@@ -469,7 +493,7 @@ export default function MainScreen() {
           if (!alive) return;
           setStudentInfo(info);
           studentInfoRef.current = info;
-          await loadFromCloud(uid);
+          if (uidRef.current) await loadFromCloud(uidRef.current);
         } catch {
           if (!alive) return;
           router.replace('/signup');
@@ -689,10 +713,10 @@ export default function MainScreen() {
             <Text style={styles.smallInfo}>
               {stepCount >= MAX_DAILY_STEPS
                 ? '오늘 목표를 달성했습니다! (최대 100P 획득)'
-                : `남은 획득 가능 포인트: ${100 - Math.floor(stepCount / POINT_UNIT_STEPS)}P\n앱을 다시 열면 누락분을 자동 동기화합니다.`}
+                : `남은 획득 가능 포인트: ${100 - Math.floor(stepCount / POINT_UNIT_STEPS)}P\n걸음 걸을 때 걸음수가 바로 안 오르는 이유는 중복된 포인트 계산하고 있기 떄문입니다.`}
             </Text>
             {Platform.OS === 'android' && (
-              <Text style={styles.healthKitNote}>걸음 수 데이터: Health Connect</Text>
+              <Text style={styles.healthKitNote}>걸음 수 데이터: 하드웨어 직접 측정 (센서)</Text>
             )}
           </View>
         </View>

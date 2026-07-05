@@ -1,21 +1,15 @@
 // lib/healthSteps.android.ts
-// expo-sensors Pedometer 사용 (iOS CoreMotion과 동일 방식)
-import { Pedometer } from 'expo-sensors';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-function startOfDay(date = new Date()) {
-  const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
-
+/**
+ * Android에서는 시스템(Health Connect) 동기화 지연을 피하기 위해
+ * AsyncStorage에 저장된 오늘의 누적 걸음수를 '절대값'으로 반환합니다.
+ * 실제 실시간 측정은 MainScreen과 foregroundSync의 Pedometer.watchStepCount가 담당합니다.
+ */
 export async function getTodayStepsAbsolute(): Promise<number> {
-  const now = new Date();
-  const start = startOfDay(now);
   try {
-    const { status } = await Pedometer.requestPermissionsAsync();
-    if (status !== 'granted') return 0;
-    const res = await Pedometer.getStepCountAsync(start, now);
-    const abs = Number(res?.steps ?? 0);
+    const savedValue = await AsyncStorage.getItem('steps_today_value');
+    const abs = Number(savedValue ?? '0');
     return Number.isFinite(abs) && abs > 0 ? abs : 0;
   } catch (e) {
     console.log('ANDROID_ABS_STEPS_ERR', e);

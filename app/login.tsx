@@ -76,11 +76,14 @@ export default function LoginScreen() {
       const currentUid = googleUser ? extractUidFromGoogleUser(googleUser) : null;
 
       const storedUid = await AsyncStorage.getItem('currentUid');
-      if (currentUid && storedUid !== currentUid) {
+      // 기존에 로그인했던 유저(storedUid)가 있고, 현재 로그인한 유저(currentUid)와 다를 때만 초기화
+      if (currentUid && storedUid && storedUid !== currentUid) {
         await AsyncStorage.removeItem('studentInfo');
         await AsyncStorage.removeItem('steps_today_date');
         await AsyncStorage.removeItem('steps_today_value');
         await AsyncStorage.removeItem('points_value');
+      }
+      if (currentUid) {
         await AsyncStorage.setItem('currentUid', currentUid);
       }
 

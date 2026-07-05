@@ -51,10 +51,8 @@ export default function ShopScreen() {
   // ✅ 상점 아이템(하드코딩)
   const items: ShopItem[] = useMemo(
     () => [
-      { id: 'item_speed', name: '메가커피 쿠폰 3.000원', price: 1400 },
-      { id: 'item_skin', name: '맘스터치 싸이버거 쿠폰', price: 300 },
-      { id: 'item_ticket', name: '테스트용 최민기', price: 1 },
-      { id: 'item_badge', name: '컴포즈 쿠폰 4000원', price: 1600 },
+      { id: 'item_speed', name: '문화상품권 5천원', price: 3000 },
+     
     ],
     []
   );

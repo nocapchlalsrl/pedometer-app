@@ -5,6 +5,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { GoogleSignin } from '@react-native-google-signin/google-signin';
 import { LogBox, Platform } from 'react-native';
 import 'react-native-reanimated';
+// ✅ Firebase
+import { auth } from '../lib/firebase';
 // iOS HealthKit 백그라운드 동기화 task 등록 (defineTask도 이 import로 실행됨)
 import { registerBackgroundSync } from '../lib/backgroundTask';
 
@@ -38,9 +40,14 @@ export default function RootLayout() {
     let alive = true;
     const boot = async () => {
       try {
+        // Firebase 인증 세션 복구 대기
+        await auth.authStateReady();
+        
         const googleUser = await AsyncStorage.getItem('googleUser');
         const studentInfo = await AsyncStorage.getItem('studentInfo');
-        if (alive && googleUser && studentInfo) {
+        
+        // Firebase 세션이 있거나, 로컬 정보가 확실히 있을 때만 자동 로그인
+        if (alive && (auth.currentUser || (googleUser && studentInfo))) {
           setAutoLogin(true);
         }
       } catch (e) {

@@ -2,9 +2,9 @@
 import { Platform } from 'react-native';
 import BackgroundService from 'react-native-background-actions';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Pedometer } from 'expo-sensors';
 import { db } from './firebase';
-import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { getTodayStepsAbsolute } from './healthSteps';
+import { doc, setDoc, serverTimestamp, increment } from 'firebase/firestore';
 import { extractUidFromGoogleUser, ymd } from './utils';
 
 const STORAGE_KEYS = {
@@ -56,15 +56,16 @@ async function getStudentInfo(): Promise<any | null> {
   }
 }
 
-async function flushToCloud(uid: string, steps: number, points: number) {
+async function flushToCloud(uid: string, steps: number, pointsDelta: number) {
   const date = ymd(new Date());
   const studentInfo = await getStudentInfo();
 
   await setDoc(
     doc(db, 'users', uid),
     {
-      points,
       updatedAt: serverTimestamp(),
+      // ✅ 절대값 대신 증가분만 원자적으로 반영 (MainScreen과 동시에 써도 서로 덮어쓰지 않음)
+      ...(pointsDelta > 0 ? { points: increment(pointsDelta) } : {}),
       ...(studentInfo
         ? {
             name: studentInfo.name,
@@ -87,7 +88,7 @@ async function flushToCloud(uid: string, steps: number, points: number) {
   }
 }
 
-// ✅ 서비스 루프: 10~30초 간격으로 절대값 읽어서 보정
+// ✅ watchStepCount 이벤트 기반으로 실시간 반영. sleep은 날짜 롤오버 체크용 유지 루프에만 사용
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // ✅ 서비스 태스크: 실시간 센서 감시 모드
@@ -102,40 +103,51 @@ const task = async (taskDataArguments: any) => {
     await ensureTodayReset();
 
     let lastStepsRead = 0;
+    // ✅ 이벤트가 겹쳐 들어와도 이전 처리(read-modify-write)가 끝난 뒤 순차 실행되도록 체이닝
+    // (겹쳐서 실행되면 서로의 AsyncStorage 쓰기를 덮어써 포인트가 씹히는 원인이 됨)
+    let chain: Promise<void> = Promise.resolve();
 
     // ✅ Pedometer 실시간 감시 시작
-    subscription = Pedometer.watchStepCount(async (result) => {
-      const current = result.steps;
-      const delta = current - lastStepsRead;
-      lastStepsRead = current;
+    subscription = Pedometer.watchStepCount((result) => {
+      chain = chain.then(async () => {
+        try {
+          const current = result.steps;
+          const delta = current - lastStepsRead;
+          lastStepsRead = current;
 
-      if (delta <= 0) return;
+          if (delta <= 0) return;
 
-      const localSteps = await readLocalNumber(STORAGE_KEYS.stepsValue);
-      if (localSteps >= MAX_DAILY_STEPS) return;
+          await ensureTodayReset();
 
-      const available = MAX_DAILY_STEPS - localSteps;
-      const safeDiff = Math.min(delta, available);
-      const nextSteps = localSteps + safeDiff;
+          const localSteps = await readLocalNumber(STORAGE_KEYS.stepsValue);
+          if (localSteps >= MAX_DAILY_STEPS) return;
 
-      await writeLocalNumber(STORAGE_KEYS.stepsValue, nextSteps);
+          const available = MAX_DAILY_STEPS - localSteps;
+          const safeDiff = Math.min(delta, available);
+          const nextSteps = localSteps + safeDiff;
 
-      // 포인트 계산
-      const prevPoints = await readLocalNumber(STORAGE_KEYS.pointsValue);
-      const earnedIncrement = stepsToPoints(nextSteps) - stepsToPoints(localSteps);
-      const nextPoints = earnedIncrement > 0 ? prevPoints + earnedIncrement : prevPoints;
+          await writeLocalNumber(STORAGE_KEYS.stepsValue, nextSteps);
 
-      if (nextPoints !== prevPoints) {
-        await writeLocalNumber(STORAGE_KEYS.pointsValue, nextPoints);
-      }
+          // 포인트 계산 (이번 이벤트에서 새로 벌어들인 만큼만)
+          const prevPoints = await readLocalNumber(STORAGE_KEYS.pointsValue);
+          const earned = Math.max(0, stepsToPoints(nextSteps) - stepsToPoints(localSteps));
+          const nextPoints = prevPoints + earned;
 
-      // 알림 업데이트 및 클라우드 동기화
-      await BackgroundService.updateNotification({
-        taskTitle: '걸음수 측정 중 (실시간)',
-        taskDesc: `현재 ${nextSteps.toLocaleString()}걸음 (${nextPoints}P)`,
+          if (earned > 0) {
+            await writeLocalNumber(STORAGE_KEYS.pointsValue, nextPoints);
+          }
+
+          // 알림 업데이트 및 클라우드 동기화
+          await BackgroundService.updateNotification({
+            taskTitle: '걸음수 측정 중 (실시간)',
+            taskDesc: `현재 ${nextSteps.toLocaleString()}걸음 (${nextPoints}P)`,
+          });
+
+          await flushToCloud(uid, nextSteps, earned);
+        } catch (e) {
+          console.log('FG_STEP_EVENT_ERR', e);
+        }
       });
-
-      await flushToCloud(uid, nextSteps, nextPoints);
     });
 
     // 서비스 유지 (구독이 살아있는 동안 무한 대기)

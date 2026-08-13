@@ -124,7 +124,7 @@ export default function SignupScreen() {
           <Text style={styles.label}>이름</Text>
           <TextInput
             style={styles.input}
-            placeholder="예: 최민기"
+            placeholder="예: 홍길동"
             placeholderTextColor="#6B7280"
             value={name}
             onChangeText={setName}

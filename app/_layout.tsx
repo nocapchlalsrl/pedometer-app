@@ -12,11 +12,6 @@ import { registerBackgroundSync } from '../lib/backgroundTask';
 
 LogBox.ignoreLogs(['unable to activate keep awake', 'Unable to activate keep awake']);
 
-// ✅ anchor = login (고유 경로 /login = app/login.tsx)
-export const unstable_settings = {
-  anchor: 'login',
-};
-
 export default function RootLayout() {
   const [bootChecked, setBootChecked] = useState(false);
   const [autoLogin, setAutoLogin] = useState(false);

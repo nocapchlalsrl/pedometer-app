@@ -8,8 +8,10 @@ import {
   ActivityIndicator,
   Alert,
   Linking,
+  Platform,
   ScrollView,
 } from 'react-native';
+import { requestIgnoreBatteryOptimization } from '../../lib/batteryOptimization';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { extractUidFromGoogleUser } from '../../lib/utils';
@@ -272,12 +274,39 @@ export default function MyPageTab() {
           <Text style={styles.logoutText}>로그아웃</Text>
         </TouchableOpacity>
 
+        {/* 배터리 최적화 예외 설정 (Android 전용) */}
+        {Platform.OS === 'android' && (
+          <TouchableOpacity
+            style={styles.linkBtn}
+            onPress={() =>
+              Alert.alert(
+                '백그라운드 걸음 기록 설정',
+                '화면을 끄거나 앱을 백그라운드로 보내도 걸음수가 계속 기록되려면, 이 앱을 배터리 최적화 대상에서 제외해야 합니다.',
+                [
+                  { text: '취소', style: 'cancel' },
+                  { text: '설정하기', onPress: () => requestIgnoreBatteryOptimization() },
+                ]
+              )
+            }
+          >
+            <Text style={styles.linkText}>배터리 최적화 제외 설정</Text>
+          </TouchableOpacity>
+        )}
+
         {/* 개인정보처리방침 */}
         <TouchableOpacity
           style={styles.linkBtn}
           onPress={() => Linking.openURL(PRIVACY_POLICY_URL)}
         >
           <Text style={styles.linkText}>개인정보처리방침</Text>
+        </TouchableOpacity>
+
+        {/* 문의하기 */}
+        <TouchableOpacity
+          style={styles.linkBtn}
+          onPress={() => Linking.openURL('https://help-dbg.pages.dev/')}
+        >
+          <Text style={styles.linkText}>문의하기</Text>
         </TouchableOpacity>
 
         {/* 계정 삭제 */}

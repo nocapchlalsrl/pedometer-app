@@ -1,7 +1,7 @@
 {
   "name": "rn-google-login",
   "main": "expo-router/entry",
-  "version": "1.4.5",
+  "version": "1.4.6",
   "scripts": {
     "start": "expo start",
     "reset-project": "node ./scripts/reset-project.js",
@@ -17,24 +17,24 @@
     "@react-navigation/bottom-tabs": "^7.4.0",
     "@react-navigation/elements": "^2.6.3",
     "@react-navigation/native": "^7.1.8",
-    "expo": "~54.0.23",
+    "expo": "~54.0.35",
     "expo-background-fetch": "~14.0.9",
     "expo-constants": "~18.0.10",
-    "expo-dev-client": "~6.0.20",
-    "expo-font": "~14.0.9",
+    "expo-dev-client": "~6.0.21",
+    "expo-font": "~14.0.12",
     "expo-haptics": "~15.0.7",
     "expo-health-connect": "^0.1.1",
     "expo-image": "~3.0.10",
     "expo-intent-launcher": "~13.0.8",
-    "expo-linking": "~8.0.8",
-    "expo-router": "~6.0.14",
+    "expo-linking": "~8.0.12",
+    "expo-router": "~6.0.24",
     "expo-sensors": "~15.0.8",
     "expo-splash-screen": "~31.0.10",
     "expo-status-bar": "~3.0.8",
     "expo-symbols": "~1.0.7",
     "expo-system-ui": "~6.0.8",
     "expo-task-manager": "~14.0.9",
-    "expo-web-browser": "~15.0.9",
+    "expo-web-browser": "~15.0.11",
     "firebase": "^12.9.0",
     "react": "19.1.0",
     "react-dom": "19.1.0",
@@ -59,7 +59,9 @@
   "expo": {
     "doctor": {
       "reactNativeDirectoryCheck": {
-        "exclude": ["react-native-background-actions"]
+        "exclude": [
+          "react-native-background-actions"
+        ]
       }
     }
   }

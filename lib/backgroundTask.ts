@@ -10,7 +10,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { getTodayStepsAbsolute } from './healthSteps';
 import { db } from './firebase';
-import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, setDoc, serverTimestamp, increment } from 'firebase/firestore';
 import { extractUidFromGoogleUser, ymd } from './utils';
 
 export const PEDOMETER_BG_TASK = 'com.seoma.pedmeter.bg-sync';
@@ -97,7 +97,8 @@ TaskManager.defineTask(PEDOMETER_BG_TASK, async () => {
 
     if (addP > 0) {
       const userRef = doc(db, 'users', uid);
-      await setDoc(userRef, { points: newPoints, updatedAt: serverTimestamp() }, { merge: true });
+      // ✅ 절대값이 아니라 증가분만 원자적으로 반영 (MainScreen과 동시에 써도 서로 덮어쓰지 않음)
+      await setDoc(userRef, { points: increment(addP), updatedAt: serverTimestamp() }, { merge: true });
     }
 
     console.log(`[BG_TASK] +${diff} steps → ${newSteps}, +${addP}P → ${newPoints}P`);

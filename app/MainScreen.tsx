@@ -20,7 +20,7 @@ import { useFocusEffect } from '@react-navigation/native';
 
 // ✅ Firebase
 import { db, auth } from '../lib/firebase';
-import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, setDoc, serverTimestamp, increment } from 'firebase/firestore';
 
 // ✅ 공통 유틸
 import { extractUidFromGoogleUser, ymd } from '../lib/utils';
@@ -36,6 +36,10 @@ import {
 
 // ✅ 플랫폼별 절대 걸음수 (Android: Health Connect, iOS: Pedometer)
 import { getTodayStepsAbsolute } from '../lib/healthSteps';
+// ✅ Android 백그라운드 포그라운드 서비스 (iOS는 no-op 스텁)
+import { startForegroundSync, stopForegroundSync, isForegroundSyncRunning } from '../lib/foregroundSync';
+// ✅ Android 배터리 최적화 예외 요청
+import { requestIgnoreBatteryOptimization } from '../lib/batteryOptimization';
 
 
 const COLORS = {
@@ -67,6 +71,29 @@ async function openAppSettings() {
     await Linking.openSettings();
   } catch (e) {
     console.log('OPEN_SETTINGS_ERR', e);
+  }
+}
+
+const BATTERY_OPT_PROMPT_KEY = 'battery_opt_prompt_shown_v1';
+
+// ✅ 최초 1회, 배터리 최적화 예외를 요청하는 안내 팝업 (Android)
+// 제조사 절전 관리로 포그라운드 서비스가 꺼져서 백그라운드 걸음 기록이 안 되는 걸 방지
+async function maybePromptBatteryOptimization() {
+  try {
+    const shown = await AsyncStorage.getItem(BATTERY_OPT_PROMPT_KEY);
+    if (shown) return;
+    await AsyncStorage.setItem(BATTERY_OPT_PROMPT_KEY, '1');
+
+    Alert.alert(
+      '백그라운드 걸음 기록 설정',
+      '화면을 끄거나 앱을 백그라운드로 보내도 걸음수가 계속 기록되려면, 이 앱을 배터리 최적화 대상에서 제외해야 합니다.\n\n"설정하기"를 눌러 허용해주세요.',
+      [
+        { text: '나중에', style: 'cancel' },
+        { text: '설정하기', onPress: () => requestIgnoreBatteryOptimization() },
+      ]
+    );
+  } catch (e) {
+    console.log('BATTERY_OPT_PROMPT_ERR', e);
   }
 }
 
@@ -103,6 +130,10 @@ export default function MainScreen() {
   const lastWatchStepsRef = useRef<number>(0);
 
   const pointsRef = useRef<number>(0);
+  // ✅ 마지막으로 클라우드에 반영(flush)한 포인트 기준점.
+  // flushToCloud는 이 값과 pointsRef.current의 "차이"만 원자적으로 더해서 보내므로,
+  // 백그라운드 서비스(foregroundSync.ts)와 동시에 써도 서로 덮어쓰지 않음.
+  const lastFlushedPointsRef = useRef<number>(0);
   const pendingStepsRef = useRef<number>(0);
 
   const subRef = useRef<any>(null);
@@ -130,7 +161,7 @@ export default function MainScreen() {
   const MAX_DAILY_STEPS = 10_000;
   const stepsToPoints = (steps: number) => Math.floor(steps / POINT_UNIT_STEPS);
 
-  // ✅ 초기화/리셋 시 즉시 표시 (애니메이션 없이)
+  // ✅ 초기화/리셋 및 백그라운드 따라잡기 시 즉시 표시 (애니메이션 없이)
   const snapStepCount = (v: number) => {
     if (animTimerRef.current) {
       clearTimeout(animTimerRef.current);
@@ -140,9 +171,8 @@ export default function MainScreen() {
     setStepCount(v);
   };
 
-  // ✅ 걸음수 1씩 올라가는 애니메이션 (CashWalk-like)
+  // ✅ 실시간으로 걷는 중 걸음수 1씩 올라가는 애니메이션 (CashWalk-like)
   // 차이에 따라 속도 자동 조절: 항상 ~1.5초 안에 완료
-  // 5걸음 차이 → 300ms/걸음(느림), 100걸음 → 15ms/걸음(빠름), 1000걸음 → 10ms(최소)
   const animateStepCount = (target: number) => {
     if (animTimerRef.current) {
       clearTimeout(animTimerRef.current);
@@ -151,7 +181,6 @@ export default function MainScreen() {
     const diff = target - displayRef.current;
     if (diff <= 0) return;
 
-    // 전체 애니메이션이 약 1.5초 걸리도록 간격 계산, 최소 10ms 최대 300ms
     const interval = Math.min(300, Math.max(10, Math.floor(1500 / diff)));
 
     const tick = () => {
@@ -176,10 +205,12 @@ export default function MainScreen() {
       const safe = Number.isFinite(v) && v >= 0 ? v : 0;
       setCurrentPoints(safe);
       pointsRef.current = safe;
+      lastFlushedPointsRef.current = safe;
       return safe;
     } catch {
       setCurrentPoints(0);
       pointsRef.current = 0;
+      lastFlushedPointsRef.current = 0;
       return 0;
     }
   };
@@ -242,15 +273,21 @@ export default function MainScreen() {
 
     const date = ymd(new Date());
     const steps = baseStepsRef.current;
-    const points = pointsRef.current;
     const info = studentInfoRef.current;
+
+    // ✅ 절대값이 아니라 마지막 flush 이후 "증가분"만 원자적으로 반영.
+    // 백그라운드 서비스(foregroundSync.ts)도 동시에 points를 increment하므로,
+    // 절대값을 그대로 쓰면 둘 중 나중에 쓴 쪽이 상대방의 증가분을 지워버리는
+    // (포인트가 씹히는) 문제가 생김.
+    const pointsSnapshot = pointsRef.current;
+    const pointsDelta = pointsSnapshot - lastFlushedPointsRef.current;
 
     try {
       await setDoc(
         userDocRef(uid),
         {
-          points,
           updatedAt: serverTimestamp(),
+          ...(pointsDelta > 0 ? { points: increment(pointsDelta) } : {}),
           ...(info
             ? {
                 name: info.name,
@@ -271,6 +308,8 @@ export default function MainScreen() {
           { merge: true }
         );
       }
+
+      lastFlushedPointsRef.current = pointsSnapshot;
     } catch (e) {
       console.log('CLOUD_FLUSH_ERR', e);
     }
@@ -287,6 +326,7 @@ export default function MainScreen() {
         if (Number.isFinite(p) && p >= 0) {
           setCurrentPoints(p);
           pointsRef.current = p;
+          lastFlushedPointsRef.current = p;
           await saveLocalPoints(p);
         }
       }
@@ -333,7 +373,7 @@ export default function MainScreen() {
 
       const newSteps = baseStepsRef.current + safeDiff;
       baseStepsRef.current = newSteps;
-      animateStepCount(newSteps);
+      snapStepCount(newSteps);
       saveTodaySteps(newSteps).catch(() => {});
 
       pendingStepsRef.current += safeDiff;
@@ -371,7 +411,6 @@ export default function MainScreen() {
     // ✅ Android: 포그라운드 서비스가 실행 중이면 직접 감시(watch)를 중단하여 중복 카운팅 방지
     // 서비스가 AsyncStorage를 업데이트하면 3초 주기의 syncAbsoluteTodaySteps가 UI를 갱신함
     if (Platform.OS === 'android') {
-      const { isForegroundSyncRunning } = require('../lib/foregroundSync');
       const running = await isForegroundSyncRunning();
       if (running) {
         console.log('[Main] Foreground Service is running, skipping local watch.');
@@ -565,6 +604,9 @@ export default function MainScreen() {
 
           if (perm.granted) {
             setPermission('granted');
+            if (Platform.OS === 'android') {
+              maybePromptBatteryOptimization();
+            }
           } else {
             setPermission('denied');
             Alert.alert(
@@ -616,6 +658,10 @@ export default function MainScreen() {
         // AsyncStorage slack key도 삭제 → 다음 syncAbsoluteTodaySteps에서 재계산 후 재저장
         sessionSlackRef.current = -1;
         AsyncStorage.removeItem(`hk_slack_${ymd(new Date())}`).catch(() => {});
+        // ✅ 포그라운드로 복귀 → 백그라운드 서비스는 멈추고 화면 내 watch로 전환
+        if (Platform.OS === 'android') {
+          await stopForegroundSync();
+        }
         await syncAbsoluteTodaySteps();
         if (isAvailableRef.current) await startWatch();
         // 3초 주기 동기화 재시작
@@ -630,6 +676,17 @@ export default function MainScreen() {
       if (prev === 'active' && nextState.match(/inactive|background/)) {
         lastCloudWriteAtRef.current = 0; // throttle 무시하고 강제 저장
         await flushToCloud();
+
+        // ✅ 백그라운드로 전환 → 화면 내 watch는 멈추고 포그라운드 서비스가 이어받음
+        // (이게 빠져 있으면 앱을 끄거나 화면을 꺼도 걸음수가 전혀 기록되지 않음)
+        if (Platform.OS === 'android') {
+          stopWatch();
+          if (syncIntervalRef.current) {
+            clearInterval(syncIntervalRef.current);
+            syncIntervalRef.current = null;
+          }
+          startForegroundSync().catch((e) => console.log('FG_SYNC_START_ERR', e));
+        }
       }
     });
 
@@ -713,10 +770,10 @@ export default function MainScreen() {
             <Text style={styles.smallInfo}>
               {stepCount >= MAX_DAILY_STEPS
                 ? '오늘 목표를 달성했습니다! (최대 100P 획득)'
-                : `남은 획득 가능 포인트: ${100 - Math.floor(stepCount / POINT_UNIT_STEPS)}P\n걸음 걸을 때 걸음수가 바로 안 오르는 이유는 중복된 포인트 계산하고 있기 떄문입니다.`}
+                : `남은 획득 가능 포인트: ${100 - Math.floor(stepCount / POINT_UNIT_STEPS)}P`}
             </Text>
             {Platform.OS === 'android' && (
-              <Text style={styles.healthKitNote}>걸음 수 데이터: 하드웨어 직접 측정 (센서)</Text>
+              <Text style={styles.healthKitNote}>하루에 한 번씩 앱에 접속해야 점수가 올라갑니다</Text>
             )}
           </View>
         </View>

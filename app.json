@@ -3,7 +3,7 @@
     "name": "만버깅",
     "owner": "seoma",
     "slug": "pedometer",
-    "version": "1.4.5",
+    "version": "1.4.7",
     "orientation": "portrait",
     "icon": "./assets/images/school-logo.png",
     "scheme": "pedometer",
@@ -12,7 +12,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.seoma.pedmeter",
-      "buildNumber": "1.4.7",
+      "buildNumber": "1.4.14",
       "googleServicesFile": "./GoogleService-Info.plist",
       "appleTeamId": "4UKF35QPZJ",
       "config": {
@@ -25,9 +25,10 @@
     "android": {
       "googleServicesFile": "./google-services.json",
       "package": "com.seoma.pedmeter",
-      "versionCode": 26,
+      "versionCode": 27,
       "permissions": [
-        "ACTIVITY_RECOGNITION"
+        "ACTIVITY_RECOGNITION",
+        "REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"
       ],
       "adaptiveIcon": {
         "backgroundColor": "#071427",
@@ -43,6 +44,8 @@
     },
     "plugins": [
       "expo-router",
+      "expo-task-manager",
+      "expo-background-fetch",
       [
         "expo-splash-screen",
         {
@@ -66,9 +69,15 @@
         {
           "android": {
             "minSdkVersion": 26
+          },
+          "ios": {
+            "useFrameworks": "static"
           }
         }
-      ]
+      ],
+      "expo-font",
+      "expo-web-browser",
+      "./plugins/withBackgroundActions"
     ],
     "experiments": {
       "typedRoutes": true,
